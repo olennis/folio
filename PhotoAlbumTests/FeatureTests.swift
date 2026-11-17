@@ -59,6 +59,8 @@ final class FeatureTests: XCTestCase {
         store.add([(id: "a", takenAt: day(2021, 11, 13)), (id: "b", takenAt: day(2021, 11, 14))], to: album)
         try photo("a").placeName = "제주시"
         try photo("b").placeName = "제주시"
+        // 앱에서는 지명을 채운 쪽(PhotoMetadata)이 앨범 부제를 다시 센다.
+        album.refreshStats()
         XCTAssertEqual(album.periodText(calendar: calendar), "2021년 11월")
         XCTAssertEqual(album.placeText, "제주시")
 
@@ -99,6 +101,15 @@ final class FeatureTests: XCTestCase {
         let near = HomeFeed.memories(in: [trip, other], today: day(2026, 11, 15), calendar: calendar)
         XCTAssertEqual(near.first?.headline, "5년 전 이맘때")
         XCTAssertTrue(HomeFeed.memories(in: [trip, other], today: day(2026, 8, 1), calendar: calendar).isEmpty)
+
+        // 앱이 쓰는 조건 조회도 같은 답을 내야 한다.
+        for today in [day(2026, 11, 13), day(2026, 11, 15), day(2026, 8, 1)] {
+            let scanned = HomeFeed.memories(in: [trip, other], today: today, calendar: calendar)
+            let queried = BackgroundQueries.memories(in: ModelContext(container), today: today, calendar: calendar)
+            XCTAssertEqual(queried.map(\.albumID), scanned.map(\.album.id))
+            XCTAssertEqual(queried.map(\.headline), scanned.map(\.headline))
+            XCTAssertEqual(queried.map(\.coverIdentifier), scanned.map(\.coverIdentifier))
+        }
     }
 
     func testSuggestionsRankSameDayAndPlaceFirst() throws {
@@ -124,5 +135,13 @@ final class FeatureTests: XCTestCase {
         let excluded = Suggestions.albums(for: incoming, among: all, excluding: [trip.id], calendar: calendar)
         XCTAssertFalse(excluded.contains { $0.album.id == trip.id })
         XCTAssertTrue(Suggestions.albums(for: [PhotoSignature()], among: all, calendar: calendar).isEmpty)
+
+        // 앱이 쓰는 조건 조회도 같은 답을 내야 한다.
+        try container.mainContext.save()
+        let queried = BackgroundQueries.suggestions(
+            in: ModelContext(container), signatures: incoming, excluding: [], calendar: calendar
+        )
+        XCTAssertEqual(queried.map(\.albumID), result.map(\.album.id))
+        XCTAssertEqual(queried.map(\.reason), result.map(\.reason))
     }
 }

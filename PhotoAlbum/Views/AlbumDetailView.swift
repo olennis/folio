@@ -19,6 +19,7 @@ struct AlbumDetailView: View {
     @State private var draftTitle = ""
     /// 방금 뺀 사진. 잠깐 동안 실행 취소할 수 있다.
     @State private var removed: RemovedPhoto?
+    @State private var linkCache = OrderedLinksCache()
     @State private var titling: Photo?
     @State private var draftPhotoTitle = ""
 
@@ -35,7 +36,7 @@ struct AlbumDetailView: View {
     }
 
     private var content: some View {
-        let links = album.orderedLinks
+        let links = linkCache.links(of: album)
         let current = links.first { $0.id == currentID } ?? links.first
 
         return VStack(spacing: 0) {
@@ -130,7 +131,7 @@ struct AlbumDetailView: View {
         .task {
             if DebugLaunch.consumeOpenViewer(), CommandLine.arguments.contains("-openViewer") {
                 try? await Task.sleep(for: .seconds(1))
-                open(album.orderedLinks.first)
+                open(linkCache.links(of: album).first)
             }
         }
         #endif
@@ -169,6 +170,7 @@ struct AlbumDetailView: View {
 
     private func carouselCard(_ link: AlbumPhoto, index: Int, in links: [AlbumPhoto]) -> some View {
         let shape = RoundedRectangle(cornerRadius: 20, style: .continuous)
+        let reduceMotion = reduceMotion
         return Button {
             open(link)
         } label: {
@@ -284,7 +286,7 @@ struct AlbumDetailView: View {
 
     /// 확인 창 없이 바로 빼고, 대신 실행 취소를 준다. 원본은 그대로라 되돌릴 수 있는 동작이다.
     private func remove(_ link: AlbumPhoto) {
-        let links = album.orderedLinks
+        let links = linkCache.links(of: album)
         let index = links.firstIndex { $0.id == link.id } ?? 0
         let neighbor = links.indices.contains(index + 1) ? links[index + 1] : (index > 0 ? links[index - 1] : nil)
         withAnimation(settle) {

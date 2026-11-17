@@ -5,8 +5,16 @@ import SwiftUI
 struct HomeView: View {
     @Query(sort: [SortDescriptor(\Album.sortIndex), SortDescriptor(\Album.createdAt, order: .reverse)])
     private var albums: [Album]
+    @Environment(\.modelContext) private var context
     @Namespace private var zoom
+    /// 몇 년 전 오늘의 앨범. 모든 사진을 훑어야 해서 백그라운드에서 구해 둔다.
+    @State private var memories: [BackgroundQueries.MemoryResult] = []
     let openLibrary: () -> Void
+
+    /// 앨범이 늘거나 줄거나 사진이 바뀌면 달라지는 값. 이때만 다시 구한다.
+    private var albumsKey: [Int] {
+        albums.map(\.revision) + [albums.count]
+    }
 
     var body: some View {
         let features = features
@@ -33,6 +41,9 @@ struct HomeView: View {
                 }
             }
             .navigationTitle("홈")
+            .task(id: albumsKey) {
+                memories = await BackgroundQueries.memories(container: context.container, today: AppClock.today)
+            }
             .navigationDestination(for: HomeRoute.self) { route in
                 AlbumDetailView(album: route.album)
                     .zoomDestination(id: route.source, in: zoom)
@@ -42,15 +53,17 @@ struct HomeView: View {
 
     /// 추천 앨범: 몇 년 전 오늘의 앨범이 먼저, 그다음 자주 보는 인물.
     private var features: [Feature] {
-        let memories = HomeFeed.memories(in: albums, today: AppClock.today)
-        var used = Set(memories.map(\.album.id))
-        var result = memories.map { memory in
-            Feature(
+        var used: Set<UUID> = []
+        var result: [Feature] = []
+        for memory in memories {
+            guard let album = albums.first(where: { $0.id == memory.albumID }) else { continue }
+            used.insert(album.id)
+            result.append(Feature(
                 headline: memory.headline,
                 symbol: "clock.arrow.circlepath",
-                album: memory.album,
+                album: album,
                 coverIdentifier: memory.coverIdentifier
-            )
+            ))
         }
         for album in HomeFeed.frequentPeople(in: albums) where !used.contains(album.id) {
             used.insert(album.id)
@@ -114,7 +127,7 @@ struct HomeView: View {
                                         .font(.subheadline.weight(.medium))
                                         .foregroundStyle(.primary)
                                         .lineLimit(1)
-                                    Text(album.periodText() ?? "사진 \(album.orderedLinks.count.formatted())장")
+                                    Text(album.periodText() ?? "사진 \(album.photoCount.formatted())장")
                                         .font(.footnote)
                                         .foregroundStyle(.secondary)
                                         .lineLimit(1)

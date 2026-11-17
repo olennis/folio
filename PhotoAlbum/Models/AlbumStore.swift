@@ -77,10 +77,13 @@ struct AlbumStore {
         var present = Set(album.links.compactMap { $0.photo?.assetIdentifier })
         var position = (album.links.map(\.position).max() ?? -1) + 1
         var added: [AlbumPhoto] = []
+        // 이미 다른 앨범에 있는 사진은 한 번에 찾아 둔다(사진마다 따로 찾으면 수천 장에서 느리다).
+        var existing = photos(for: assets.map(\.id).filter { !present.contains($0) })
         for asset in assets where !present.contains(asset.id) {
-            let photo = photo(for: asset.id) ?? {
+            let photo = existing[asset.id] ?? {
                 let new = Photo(assetIdentifier: asset.id, takenAt: asset.takenAt)
                 context.insert(new)
+                existing[asset.id] = new
                 return new
             }()
             let link = AlbumPhoto(position: position)
@@ -91,6 +94,7 @@ struct AlbumStore {
             position += 1
             added.append(link)
         }
+        album.refreshStats()
         save()
         return added
     }
@@ -123,7 +127,10 @@ struct AlbumStore {
             if wasCover { album.coverAssetIdentifier = nil }
         }
         unlink(link)
-        if let album { reindex(album) }
+        if let album {
+            reindex(album)
+            album.refreshStats()
+        }
         if let photo { purgeOrphans([photo]) }
         save()
         return removed
@@ -139,6 +146,7 @@ struct AlbumStore {
         ordered.insert(link, at: min(max(removed.position, 0), ordered.count))
         for (index, item) in ordered.enumerated() { item.position = index }
         if removed.wasCover { album.coverAssetIdentifier = removed.assetIdentifier }
+        album.refreshStats()
         // 사진 참조가 지워졌다가 새로 만들어졌으면 붙여 둔 이름과 위치를 돌려놓는다.
         if let photo = link.photo {
             photo.title = photo.title ?? removed.title
@@ -159,6 +167,7 @@ struct AlbumStore {
                 if album.coverAssetIdentifier == photo.assetIdentifier { album.coverAssetIdentifier = nil }
                 unlink(link)
                 reindex(album)
+                album.refreshStats()
             }
         }
         let current = Set(photo.links.compactMap { $0.album?.id })
@@ -167,6 +176,7 @@ struct AlbumStore {
             context.insert(link)
             link.album = album
             link.photo = photo
+            album.refreshStats()
         }
         purgeOrphans([photo])
         save()
@@ -181,6 +191,7 @@ struct AlbumStore {
         guard to != from else { return }
         ordered.insert(ordered.remove(at: from), at: to)
         for (index, item) in ordered.enumerated() { item.position = index }
+        album.refreshStats()
         save()
     }
 
@@ -195,10 +206,19 @@ struct AlbumStore {
 
     // MARK: 내부
 
-    private func photo(for assetIdentifier: String) -> Photo? {
-        var descriptor = FetchDescriptor<Photo>(predicate: #Predicate { $0.assetIdentifier == assetIdentifier })
-        descriptor.fetchLimit = 1
-        return try? context.fetch(descriptor).first
+    /// 저장해 둔 사진 수와 첫 사진이 없는 앨범을 센다. 이 값이 생기기 전에 만든 앨범을 위해 실행할 때 한 번 부른다.
+    func refreshMissingStats() {
+        let albums = (try? context.fetch(FetchDescriptor<Album>(predicate: #Predicate { $0.cachedCount < 0 }))) ?? []
+        guard !albums.isEmpty else { return }
+        for album in albums { album.refreshStats() }
+        save()
+    }
+
+    private func photos(for identifiers: [String]) -> [String: Photo] {
+        guard !identifiers.isEmpty else { return [:] }
+        let descriptor = FetchDescriptor<Photo>(predicate: #Predicate { identifiers.contains($0.assetIdentifier) })
+        let found = (try? context.fetch(descriptor)) ?? []
+        return Dictionary(found.map { ($0.assetIdentifier, $0) }, uniquingKeysWith: { first, _ in first })
     }
 
     private func unlink(_ link: AlbumPhoto) {

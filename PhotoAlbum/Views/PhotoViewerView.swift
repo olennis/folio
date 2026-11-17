@@ -17,10 +17,11 @@ struct PhotoViewerView: View {
     @State private var editingAlbumsOf: Photo?
     /// 슬라이드쇼가 돌고 있는지.
     @State private var playing = false
+    @State private var linkCache = OrderedLinksCache()
 
     private var store: AlbumStore { AlbumStore(context: context) }
     private var links: [AlbumPhoto] {
-        (album.isDeleted || album.modelContext == nil) ? [] : album.orderedLinks
+        (album.isDeleted || album.modelContext == nil) ? [] : linkCache.links(of: album)
     }
 
     var body: some View {

@@ -104,7 +104,12 @@ struct AlbumChoiceList: View {
         }
         .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always), prompt: "앨범 검색")
         .task(id: signatures) {
-            suggestions = Suggestions.albums(for: signatures, among: albums, excluding: excluded)
+            let found = await BackgroundQueries.suggestions(
+                container: context.container, signatures: signatures, excluding: excluded
+            )
+            suggestions = found.compactMap { item in
+                albums.first { $0.id == item.albumID }.map { AlbumSuggestion(album: $0, reason: item.reason) }
+            }
         }
         .alert("새로운 앨범", isPresented: $showCreate) {
             TextField("앨범 이름", text: $draftTitle)

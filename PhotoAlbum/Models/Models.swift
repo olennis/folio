@@ -77,6 +77,15 @@ final class Album {
     var lastOpenedAt: Date?
     /// 연 횟수. 홈의 "자주 보는 인물"에 쓴다.
     var openCount: Int = 0
+    /// 사진 수와 첫 사진. 앨범을 그릴 때마다 사진 수천 장을 훑지 않도록 저장해 둔다. -1은 아직 세지 않음.
+    var cachedCount: Int = -1
+    var cachedFirstAsset: String?
+    /// 부제에 쓰는 가장 이른·늦은 촬영일과 가장 많이 붙은 지명. 사진 수와 함께 갱신한다.
+    var cachedEarliest: Date?
+    var cachedLatest: Date?
+    var cachedPlace: String?
+    /// 사진 구성이나 순서가 바뀔 때마다 하나씩 오른다. 화면은 이 값이 바뀔 때만 목록을 다시 정렬한다.
+    var revision: Int = 0
 
     @Relationship(deleteRule: .cascade, inverse: \AlbumPhoto.album)
     var links: [AlbumPhoto] = []
@@ -89,14 +98,63 @@ final class Album {
     }
 
     /// 이 앨범 안에서의 사진 순서대로 정렬한 연결.
+    /// 저장소에 정렬해서 한 번에 물어본다. 연결을 하나씩 따라가면 처음 읽을 때 장마다 따로 불러와 3배쯤 느리다.
     var orderedLinks: [AlbumPhoto] {
-        links
-            .filter { !$0.isDeleted && $0.photo != nil }
-            .sorted { $0.position < $1.position }
+        guard let context = modelContext, !isDeleted else { return scannedOrderedLinks }
+        let albumID = id
+        let descriptor = FetchDescriptor<AlbumPhoto>(
+            predicate: #Predicate { $0.album?.id == albumID && $0.photo != nil },
+            sortBy: [SortDescriptor(\.position)]
+        )
+        return (try? context.fetch(descriptor)) ?? scannedOrderedLinks
     }
 
+    /// 저장소 없이 메모리에서 정렬한다. 저장된 속성은 읽을 때마다 비싸므로 한 번씩만 읽어 두고 정렬한다.
+    private var scannedOrderedLinks: [AlbumPhoto] {
+        var keyed: [(position: Int, link: AlbumPhoto)] = []
+        keyed.reserveCapacity(links.count)
+        for link in links where !link.isDeleted && link.photo != nil {
+            keyed.append((link.position, link))
+        }
+        keyed.sort { $0.position < $1.position }
+        return keyed.map(\.link)
+    }
+
+    /// 사진 수. `AlbumStore`가 바꿀 때마다 갱신해 둔 값을 쓴다.
+    var photoCount: Int {
+        cachedCount >= 0 ? cachedCount : links.reduce(0) { $0 + (!$1.isDeleted && $1.photo != nil ? 1 : 0) }
+    }
+
+    /// 직접 고른 표지, 없으면 첫 사진.
     var coverIdentifier: String? {
-        coverAssetIdentifier ?? orderedLinks.first?.photo?.assetIdentifier
+        coverAssetIdentifier ?? (cachedCount >= 0 ? cachedFirstAsset : orderedLinks.first?.photo?.assetIdentifier)
+    }
+
+    /// 사진 수, 첫 사진, 촬영 기간, 대표 지명을 다시 센다.
+    /// 앨범의 사진이 바뀌거나 사진의 날짜·지명이 채워질 때 부른다(`AlbumStore`, `PhotoMetadata`).
+    func refreshStats() {
+        var count = 0
+        var first: (position: Int, id: String)?
+        var earliest: Date?
+        var latest: Date?
+        var places: [String: Int] = [:]
+        for link in links where !link.isDeleted {
+            guard let photo = link.photo else { continue }
+            count += 1
+            let position = link.position
+            if first == nil || position < first!.position { first = (position, photo.assetIdentifier) }
+            if let takenAt = photo.takenAt {
+                if takenAt < (earliest ?? .distantFuture) { earliest = takenAt }
+                if takenAt > (latest ?? .distantPast) { latest = takenAt }
+            }
+            if let name = photo.placeName, !name.isEmpty { places[name, default: 0] += 1 }
+        }
+        cachedCount = count
+        cachedFirstAsset = first?.id
+        cachedEarliest = earliest
+        cachedLatest = latest
+        cachedPlace = places.max { ($0.value, $1.key) < ($1.value, $0.key) }?.key
+        revision += 1
     }
 
     var kind: AlbumKind {
@@ -125,8 +183,16 @@ final class Album {
 
     /// 사진들이 찍힌 기간. 한 달 안이면 "2021년 11월", 한 해 안이면 "2021년", 그 밖에는 "2019–2026".
     func periodText(calendar: Calendar = .current) -> String? {
-        let dates = orderedLinks.compactMap { $0.photo?.takenAt }
-        guard let first = dates.min(), let last = dates.max() else { return nil }
+        let first: Date
+        let last: Date
+        if cachedCount >= 0 {
+            guard let earliest = cachedEarliest, let latest = cachedLatest else { return nil }
+            (first, last) = (earliest, latest)
+        } else {
+            let dates = links.compactMap { $0.isDeleted ? nil : $0.photo?.takenAt }
+            guard let earliest = dates.min(), let latest = dates.max() else { return nil }
+            (first, last) = (earliest, latest)
+        }
         let a = calendar.dateComponents([.year, .month], from: first)
         let b = calendar.dateComponents([.year, .month], from: last)
         guard let startYear = a.year, let endYear = b.year, let month = a.month else { return nil }
@@ -136,8 +202,9 @@ final class Album {
 
     /// 사진에 가장 많이 붙은 지명.
     var placeText: String? {
+        if cachedCount >= 0 { return cachedPlace }
         var counts: [String: Int] = [:]
-        for link in orderedLinks {
+        for link in links where !link.isDeleted {
             if let name = link.photo?.placeName, !name.isEmpty { counts[name, default: 0] += 1 }
         }
         return counts.max { ($0.value, $1.key) < ($1.value, $0.key) }?.key
@@ -145,7 +212,7 @@ final class Album {
 
     /// "2021년 11월 · 제주시 · 사진 128장"
     var summary: String {
-        let parts = [periodText(), placeText, "사진 \(orderedLinks.count.formatted())장"]
+        let parts = [periodText(), placeText, "사진 \(photoCount.formatted())장"]
         return parts.compactMap { $0 }.joined(separator: " · ")
     }
 }
@@ -164,5 +231,20 @@ final class AlbumPhoto {
         self.id = UUID()
         self.position = position
         self.addedAt = addedAt
+    }
+}
+
+/// 앨범의 정렬된 사진 목록을 앨범이 바뀔 때까지 들고 있는다.
+/// 캐러셀을 넘길 때마다 화면이 다시 그려지는데, 그때마다 수천 장을 다시 정렬하지 않게 한다.
+final class OrderedLinksCache {
+    private var key: (id: PersistentIdentifier, revision: Int)?
+    private var value: [AlbumPhoto] = []
+
+    func links(of album: Album) -> [AlbumPhoto] {
+        let revision = album.revision
+        if let key, key.id == album.persistentModelID, key.revision == revision { return value }
+        value = album.orderedLinks
+        key = (album.persistentModelID, revision)
+        return value
     }
 }

@@ -29,3 +29,5 @@ xcodebuild -project PhotoAlbum.xcodeproj -scheme PhotoAlbum \
 실행 인자 `-seedDemo`를 주면 기기의 사진으로 예시 앨범을 만듭니다(디버그 빌드).
 
 `mockup/`에는 구현 전 HTML 목업과 화면 캡처가 있습니다.
+
+출시까지 남은 일은 [docs/RELEASE.md](docs/RELEASE.md)에 있습니다. 앱 아이콘 원본은 `design/app-icon/`에 있습니다.

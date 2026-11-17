@@ -8,20 +8,24 @@ struct OrganizeView: View {
     @Query private var photos: [Photo]
     @ObservedObject private var access = PhotoAccess.shared
 
-    @State private var libraryIDs: [String] = []
+    @Environment(\.modelContext) private var context
+    /// 미정리 사진. 보관함 전체를 훑어야 해서 백그라운드에서 구한다.
+    @State private var unsortedIDs: [String] = []
+    @State private var reloadToken = 0
     @State private var loaded = false
     @State private var selected: Set<String> = []
     @State private var showAlbums = false
     @State private var addedCount = 0
 
-    /// 사진 보관함에는 있지만 어느 앨범에도 없는 사진. 최근 사진이 먼저.
-    private var unsorted: [String] {
-        let used = Set(photos.map(\.assetIdentifier))
-        return libraryIDs.filter { !used.contains($0) }
+    /// 다시 구해야 하는 때: 권한이 바뀌거나, 앨범에 든 사진 수가 바뀌거나, 탭에 다시 들어왔을 때.
+    private struct LoadKey: Equatable {
+        let status: Int
+        let photoCount: Int
+        let token: Int
     }
 
     var body: some View {
-        let items = unsorted
+        let items = unsortedIDs
         NavigationStack {
             Group {
                 if access.status == .denied || access.status == .restricted {
@@ -88,8 +92,11 @@ struct OrganizeView: View {
             }
             // 사진이 앨범에 들어간 그 순간에만 알린다.
             .sensoryFeedback(.success, trigger: addedCount)
-            .task(id: access.status.rawValue) { load() }
-            .onAppear { if loaded { load() } }
+            .task(id: LoadKey(status: access.status.rawValue, photoCount: photos.count, token: reloadToken)) {
+                await load()
+            }
+            // 다른 앱에서 사진이 늘었을 수 있으니 탭에 들어올 때마다 다시 본다.
+            .onAppear { if loaded { reloadToken += 1 } }
         }
     }
 
@@ -133,18 +140,26 @@ struct OrganizeView: View {
         .accessibilityAddTraits(traits)
     }
 
-    private func load() {
+    private func load() async {
         guard access.status == .authorized || access.status == .limited else {
             loaded = access.status != .notDetermined
             return
         }
-        let options = PHFetchOptions()
-        options.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
-        var ids: [String] = []
-        PHAsset.fetchAssets(with: .image, options: options).enumerateObjects { asset, _, _ in
-            ids.append(asset.localIdentifier)
-        }
-        libraryIDs = ids
+        let container = context.container
+        let ids = await Task.detached(priority: .userInitiated) { () -> [String] in
+            let options = PHFetchOptions()
+            options.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
+            var library: [String] = []
+            PHAsset.fetchAssets(with: .image, options: options).enumerateObjects { asset, _, _ in
+                library.append(asset.localIdentifier)
+            }
+            var descriptor = FetchDescriptor<Photo>()
+            descriptor.propertiesToFetch = [\.assetIdentifier]
+            let used = Set(((try? ModelContext(container).fetch(descriptor)) ?? []).map(\.assetIdentifier))
+            return library.filter { !used.contains($0) }
+        }.value
+        guard !Task.isCancelled else { return }
+        unsortedIDs = ids
         selected.formIntersection(ids)
         loaded = true
     }
@@ -219,7 +234,7 @@ struct AlbumRow: View {
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(album.title)
-                Text(detail ?? "사진 \(album.orderedLinks.count.formatted())장")
+                Text(detail ?? "사진 \(album.photoCount.formatted())장")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }

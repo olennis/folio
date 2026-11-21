@@ -78,7 +78,7 @@ Xcode에서 결제를 눌러 보려면: Product → Scheme → Edit Scheme → R
 
 2026-11-18 (`worktree-release-prep` 브랜치)
 
-- **앱 아이콘**: 가로로 겹친 앨범 카드(흰 배경, 오렌지·분홍·파랑 카드), 기본·다크·틴트 세 가지. 원본은 `design/app-icon/`.
+- **앱 아이콘**: 가로로 겹친 무지개 앨범 카드(흰 배경, 맨 앞 카드에 사진 기호), 기본·다크·틴트 세 가지. 원본은 `design/app-icon/`.
 - **개인정보 매니페스트** `PhotoAlbum/PrivacyInfo.xcprivacy`: 추적 없음, 수집 데이터 없음, `UserDefaults` 사용 이유 `CA92.1`.
 - **사진 권한 문구**: 지명을 위해 촬영 좌표를 Apple 지도 서비스에 보낸다는 사실을 적음.
 - **버전 1.0**, `ITSAppUsesNonExemptEncryption = NO`(업로드할 때마다 수출 규정 질문을 받지 않음).

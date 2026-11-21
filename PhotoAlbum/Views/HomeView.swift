@@ -9,6 +9,8 @@ struct HomeView: View {
     @Namespace private var zoom
     /// 몇 년 전 오늘의 앨범. 모든 사진을 훑어야 해서 백그라운드에서 구해 둔다.
     @State private var memories: [BackgroundQueries.MemoryResult] = []
+    @ObservedObject private var pro = ProStore.shared
+    @State private var paywall: ProPaywall.Reason?
     let openLibrary: () -> Void
 
     /// 앨범이 늘거나 줄거나 사진이 바뀌면 달라지는 값. 이때만 다시 구한다.
@@ -33,7 +35,10 @@ struct HomeView: View {
                 } else {
                     ScrollView {
                         VStack(alignment: .leading, spacing: 28) {
-                            if !features.isEmpty { featured(features) }
+                            if let first = features.first {
+                                // 무료일 때는 첫 추천만 흐리게 보여 주고 Pro로 안내한다.
+                                if pro.isPro { featured(features) } else { lockedFeature(first) }
+                            }
                             if !recent.isEmpty { recents(recent) }
                         }
                         .padding(.vertical, 8)
@@ -41,6 +46,18 @@ struct HomeView: View {
                 }
             }
             .navigationTitle("홈")
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        paywall = .upgrade
+                    } label: {
+                        Label(pro.isPro ? "Folio Pro 사용 중" : "Folio Pro",
+                              systemImage: pro.isPro ? "checkmark.seal.fill" : "sparkles")
+                    }
+                    .accessibilityIdentifier("pro-button")
+                }
+            }
+            .sheet(item: $paywall) { ProPaywall(reason: $0) }
             .task(id: albumsKey) {
                 memories = await BackgroundQueries.memories(container: context.container, today: AppClock.today)
             }
@@ -106,6 +123,38 @@ struct HomeView: View {
             .contentMargins(.horizontal, 20, for: .scrollContent)
             .scrollIndicators(.hidden)
             .scrollClipDisabled()
+        }
+    }
+
+    private func lockedFeature(_ item: Feature) -> some View {
+        let shape = RoundedRectangle(cornerRadius: 22, style: .continuous)
+        return VStack(alignment: .leading, spacing: 12) {
+            header("추천 앨범")
+            Button { paywall = .memories } label: {
+                AlbumCover(identifier: item.coverIdentifier, pixels: 400)
+                    .blur(radius: 18)
+                    .overlay { Color.black.opacity(0.2) }
+                    .overlay {
+                        VStack(spacing: 10) {
+                            Label(item.headline, systemImage: item.symbol)
+                                .font(.headline)
+                            Text("Folio Pro로 열어 보기")
+                                .font(.subheadline.weight(.semibold))
+                                .padding(.horizontal, 14)
+                                .padding(.vertical, 7)
+                                .labelGlass(cornerRadius: 16)
+                        }
+                        .foregroundStyle(.white)
+                        .environment(\.colorScheme, .dark)
+                    }
+                    .frame(height: 220)
+                    .clipShape(shape)
+                    .contentShape(shape)
+            }
+            .buttonStyle(PressableStyle(scale: 0.98))
+            .padding(.horizontal, 20)
+            .accessibilityLabel(Text("\(item.headline), Folio Pro로 열어 보기"))
+            .accessibilityIdentifier("locked-feature")
         }
     }
 

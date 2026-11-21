@@ -31,6 +31,7 @@ struct PhotoAlbumApp: App {
         AlbumStore(context: container.mainContext).refreshMissingStats()
         // 단위 테스트가 앱을 호스트로 띄울 때는 권한을 묻지 않는다.
         guard NSClassFromString("XCTestCase") == nil else { return }
+        ProStore.shared.start()
         await PhotoAccess.shared.requestIfNeeded()
         #if DEBUG
         DemoSeed.runIfRequested(context: container.mainContext)

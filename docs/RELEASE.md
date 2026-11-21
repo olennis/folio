@@ -19,6 +19,29 @@ App Store에 1.0을 올리기까지 남은 일. 끝낸 항목은 아래 "끝낸 
   - 바꾸면 시뮬레이터·기기에 새 앱으로 깔려 기존 앨범 데이터가 보이지 않는다(출시 전이라 괜찮다).
   - 테스트 타깃(`.tests`, `.uitests`)의 번들 ID도 함께 바꾼다.
 
+### A-2. Folio Pro 인앱 결제 — 계정이 생긴 뒤
+
+앱 쪽 구현은 끝났다(`PhotoAlbum/Store/`). App Store Connect에서 다음을 해야 실제로 팔 수 있다.
+
+- [ ] **유료 앱 계약(Paid Apps Agreement)** 동의, **은행 계좌와 세금 정보** 입력. 이게 없으면 인앱 결제 상품이 앱에 나타나지 않는다.
+- [ ] **인앱 결제 상품 만들기**
+  - 유형: 비소모성(Non-Consumable)
+  - 상품 ID: `folio.pro` (`ProStore.productID`와 같아야 한다. 한 번 쓰면 다시 쓸 수 없다)
+  - 가격: 5,900원 안팎(테스트용 `Folio.storekit`과 맞춰 둠). 이름 "Folio Pro", 설명은 `Folio.storekit`의 것.
+  - 가족 공유: 켬(결제 화면이 "가족 공유로 함께 쓸 수 있어요"라고 안내한다. 끄면 문구도 고친다).
+  - 심사용 스크린샷: 결제 화면(`mockup/screenshots/ui-14-paywall.png` 같은 화면을 실제 기기 크기로).
+- [ ] **첫 버전과 함께 심사 제출**: 처음 만든 인앱 결제 상품은 앱 버전 심사에 함께 붙여 낸다.
+- [ ] **샌드박스 테스터로 실기기 구매·복원 확인**(App Store Connect → 사용자 및 액세스 → 샌드박스).
+
+무료와 Pro의 경계(바꾸려면 `ProStore.freeAlbumLimit`과 각 화면):
+- 무료: 앨범 5개까지(이미 더 가진 앨범은 그대로 씀), 나머지 기능 전부.
+- Pro: 앨범 무제한, 앨범 선택 시트의 "추천", 홈의 "추천 앨범"(몇 년 전 오늘, 자주 보는 인물).
+  무료 사용자에게는 추천이 실제로 있을 때만 잠긴 미리보기를 보여 준다.
+
+Xcode에서 결제를 눌러 보려면: Product → Scheme → Edit Scheme → Run → Options → StoreKit Configuration에서 `Folio.storekit`을 고른다.
+공유 스킴에는 넣지 않았다. 넣으면 `xcodebuild test`로 단위·UI 테스트를 한꺼번에 돌릴 때 Xcode의 로컬 StoreKit 서버와
+단위 테스트의 `SKTestSession`이 부딪혀 구매 테스트가 실패한다. 단위 테스트(`ProStoreTests`)는 스킴과 상관없이 이 파일로 구매·환불·복원을 확인한다.
+
 ### B. 출시 전 보강
 
 - [ ] **최소 iOS 버전 정하기** (지금 iOS 17.0)

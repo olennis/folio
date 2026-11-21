@@ -60,6 +60,8 @@ struct AlbumChoiceList: View {
 
     @State private var query = ""
     @State private var suggestions: [AlbumSuggestion] = []
+    @ObservedObject private var pro = ProStore.shared
+    @State private var paywall: ProPaywall.Reason?
     @State private var showCreate = false
     @State private var draftTitle = ""
 
@@ -77,6 +79,10 @@ struct AlbumChoiceList: View {
             if !searching {
                 Section {
                     Button {
+                        guard pro.canCreateAlbum(currentCount: albums.count) else {
+                            paywall = .albumLimit
+                            return
+                        }
                         draftTitle = ""
                         showCreate = true
                     } label: {
@@ -85,8 +91,20 @@ struct AlbumChoiceList: View {
                 }
                 if !suggestions.isEmpty {
                     Section("추천") {
-                        ForEach(suggestions) { item in
-                            choice(item.album, detail: item.reason)
+                        if pro.isPro {
+                            ForEach(suggestions) { item in
+                                choice(item.album, detail: item.reason)
+                            }
+                        } else {
+                            // 추천이 실제로 있을 때만, 몇 개인지 알려 주고 Pro로 안내한다.
+                            Button { paywall = .suggestions } label: {
+                                LockedRow(
+                                    title: "날짜·장소가 맞는 앨범 \(suggestions.count)개",
+                                    detail: "Folio Pro에서 추천 앨범을 볼 수 있어요"
+                                )
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityIdentifier("locked-suggestions")
                         }
                     }
                 }
@@ -111,6 +129,7 @@ struct AlbumChoiceList: View {
                 albums.first { $0.id == item.albumID }.map { AlbumSuggestion(album: $0, reason: item.reason) }
             }
         }
+        .sheet(item: $paywall) { ProPaywall(reason: $0) }
         .alert("새로운 앨범", isPresented: $showCreate) {
             TextField("앨범 이름", text: $draftTitle)
             Button("취소", role: .cancel) {}
@@ -125,5 +144,35 @@ struct AlbumChoiceList: View {
             AlbumRow(album: album, isOn: selected.contains(album.id), detail: detail)
         }
         .buttonStyle(.plain)
+    }
+}
+
+/// Pro에서 열리는 항목 자리에 놓는 한 줄.
+struct LockedRow: View {
+    let title: String
+    let detail: String
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "sparkles")
+                .font(.title3)
+                .foregroundStyle(.white)
+                .frame(width: 48, height: 48)
+                .background(Color.accentColor.gradient, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                Text(detail).font(.footnote).foregroundStyle(.secondary)
+            }
+            Spacer()
+            Text("Pro")
+                .font(.caption.weight(.bold))
+                .foregroundStyle(Color.accentColor)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .overlay(Capsule().strokeBorder(Color.accentColor))
+        }
+        .contentShape(Rectangle())
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isButton)
     }
 }

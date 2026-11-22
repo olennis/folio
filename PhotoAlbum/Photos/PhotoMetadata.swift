@@ -1,4 +1,5 @@
 import CoreLocation
+import MapKit
 import Photos
 import SwiftData
 
@@ -6,7 +7,6 @@ import SwiftData
 @MainActor
 enum PhotoMetadata {
     private static var running = false
-    private static let geocoder = CLGeocoder()
     /// 한 번에 지명으로 풀 곳의 수. 지오코더는 짧은 시간에 많이 부르면 거절한다.
     private static let placesPerRun = 20
 
@@ -17,9 +17,11 @@ enum PhotoMetadata {
         running = true
         defer { running = false }
 
-        let photos = (try? context.fetch(FetchDescriptor<Photo>())) ?? []
-        fillCoordinates(photos.filter { !$0.locationChecked }, context: context)
-        await resolvePlaces(photos.filter { $0.latitude != nil && $0.longitude != nil && $0.placeName == nil }, context: context)
+        // 필요한 사진만 조회한다. 모든 사진을 불러와 거르면 실행할 때마다 수천 장을 읽게 된다.
+        let unchecked = FetchDescriptor<Photo>(predicate: #Predicate { !$0.locationChecked })
+        fillCoordinates((try? context.fetch(unchecked)) ?? [], context: context)
+        let unnamed = FetchDescriptor<Photo>(predicate: #Predicate { $0.latitude != nil && $0.placeName == nil })
+        await resolvePlaces((try? context.fetch(unnamed)) ?? [], context: context)
     }
 
     private static func fillCoordinates(_ pending: [Photo], context: ModelContext) {
@@ -35,7 +37,17 @@ enum PhotoMetadata {
             if photo.takenAt == nil { photo.takenAt = asset.creationDate }
         }
         for photo in pending { photo.locationChecked = true }
+        refreshAlbums(of: pending)
         try? context.save()
+    }
+
+    /// 날짜·지명이 바뀐 사진이 든 앨범의 부제를 다시 센다.
+    private static func refreshAlbums(of photos: [Photo]) {
+        var albums: [PersistentIdentifier: Album] = [:]
+        for photo in photos where !photo.isDeleted {
+            for link in photo.links { if let album = link.album { albums[album.persistentModelID] = album } }
+        }
+        for album in albums.values { album.refreshStats() }
     }
 
     private static func resolvePlaces(_ unnamed: [Photo], context: ModelContext) async {
@@ -46,15 +58,33 @@ enum PhotoMetadata {
             guard let latitude = photo.latitude, let longitude = photo.longitude else { continue }
             groups[String(format: "%.2f,%.2f", latitude, longitude), default: []].append(photo)
         }
+        var named: [Photo] = []
         for group in groups.values.sorted(by: { $0.count > $1.count }).prefix(placesPerRun) {
             guard let first = group.first, let latitude = first.latitude, let longitude = first.longitude else { continue }
             let location = CLLocation(latitude: latitude, longitude: longitude)
             // 네트워크가 없거나 거절당하면 멈추고 다음 실행 때 이어서 한다.
-            guard let place = try? await geocoder.reverseGeocodeLocation(location).first else { break }
-            let name = place.locality ?? place.administrativeArea ?? place.country
-            for photo in group where !photo.isDeleted { photo.placeName = name ?? "" }
+            guard let name = await placeName(at: location) else { break }
+            for photo in group where !photo.isDeleted { photo.placeName = name }
+            named.append(contentsOf: group)
         }
+        refreshAlbums(of: named)
         try? context.save()
+    }
+}
+
+extension PhotoMetadata {
+    /// 좌표를 도시 이름으로 푼다. 실패하면 nil, 이름이 없는 곳(바다 위 등)이면 빈 문자열.
+    static func placeName(at location: CLLocation) async -> String? {
+        if #available(iOS 26.0, *) {
+            guard let request = MKReverseGeocodingRequest(location: location),
+                  let item = try? await request.mapItems.first
+            else { return nil }
+            let address = item.addressRepresentations
+            return address?.cityName ?? address?.regionName ?? ""
+        } else {
+            guard let place = try? await CLGeocoder().reverseGeocodeLocation(location).first else { return nil }
+            return place.locality ?? place.administrativeArea ?? place.country ?? ""
+        }
     }
 }
 

@@ -158,7 +158,7 @@ struct LibraryView: View {
                 // 더미에서 빠지고 들어올 때 같은 길로 오간다.
                 .transition(.opacity.combined(with: .offset(y: 120)))
                 .contextMenu { cardMenu(item.album) }
-                .accessibilityLabel(Text(verbatim: "\(item.album.title), 사진 \(item.album.orderedLinks.count)장"))
+                .accessibilityLabel(Text(verbatim: "\(item.album.title), 사진 \(item.album.photoCount)장"))
                 .accessibilityAction(named: "다음 앨범") { front = (current + 1) % count }
                 .accessibilityAction(named: "이전 앨범") { front = (current - 1 + count) % count }
             }
@@ -270,7 +270,7 @@ struct AlbumCard: View {
     let album: Album
     var frontness: CGFloat
 
-    private var count: Int { album.orderedLinks.count }
+    private var count: Int { album.photoCount }
     private var shape: RoundedRectangle { RoundedRectangle(cornerRadius: 24, style: .continuous) }
 
     var body: some View {

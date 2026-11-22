@@ -4,28 +4,56 @@ import SwiftUI
 
 @main
 struct PhotoAlbumApp: App {
-    let container: ModelContainer = {
-        do {
-            return try ModelContainer(for: Album.self, Photo.self, AlbumPhoto.self)
-        } catch {
-            fatalError("저장소를 열 수 없습니다: \(error)")
-        }
-    }()
+    /// 저장소를 열지 못해도 앱을 끝내지 않는다. 데이터는 건드리지 않고 안내만 보여 준다.
+    private let store: Result<ModelContainer, Error> = Result {
+        try ModelContainer(
+            for: Schema(versionedSchema: FolioSchemaV1.self),
+            migrationPlan: FolioMigrationPlan.self
+        )
+    }
 
     var body: some Scene {
         WindowGroup {
-            RootView()
-                .task {
-                    // 단위 테스트가 앱을 호스트로 띄울 때는 권한을 묻지 않는다.
-                    guard NSClassFromString("XCTestCase") == nil else { return }
-                    await PhotoAccess.shared.requestIfNeeded()
-                    #if DEBUG
-                    DemoSeed.runIfRequested(context: container.mainContext)
-                    #endif
-                    await PhotoMetadata.refresh(context: container.mainContext)
-                }
+            switch store {
+            case .success(let container):
+                RootView()
+                    .task { await prepare(container) }
+                    .modelContainer(container)
+            case .failure(let error):
+                StoreErrorView(error: error)
+            }
         }
-        .modelContainer(container)
+    }
+
+    @MainActor
+    private func prepare(_ container: ModelContainer) async {
+        // 사진 수·부제를 저장해 두기 전에 만든 앨범을 한 번 센다.
+        AlbumStore(context: container.mainContext).refreshMissingStats()
+        // 단위 테스트가 앱을 호스트로 띄울 때는 권한을 묻지 않는다.
+        guard NSClassFromString("XCTestCase") == nil else { return }
+        await PhotoAccess.shared.requestIfNeeded()
+        #if DEBUG
+        DemoSeed.runIfRequested(context: container.mainContext)
+        #endif
+        await PhotoMetadata.refresh(context: container.mainContext)
+    }
+}
+
+/// 저장소를 열지 못했을 때. 대개 앱을 이전 버전으로 되돌렸거나 데이터 이전이 실패한 경우다.
+/// 지우고 새로 만들면 앨범이 사라지므로, 여기서는 아무것도 지우지 않는다.
+struct StoreErrorView: View {
+    let error: Error
+
+    var body: some View {
+        ContentUnavailableView {
+            Label("앨범 정보를 열지 못했습니다", systemImage: "exclamationmark.triangle")
+        } description: {
+            Text("앱을 최신 버전으로 업데이트한 뒤 다시 열어 주세요. 사진 보관함의 사진은 그대로입니다.")
+        } actions: {
+            ShareLink(item: String(describing: error)) {
+                Text("오류 내용 보내기")
+            }
+        }
     }
 }
 

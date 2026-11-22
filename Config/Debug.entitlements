@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- 디버그 빌드에만. 개발 팀 없이(애드혹 서명) 빌드해도 StoreKit 테스트가 이 앱을 개발용 설치로 알아보게 한다. -->
+	<key>get-task-allow</key>
+	<true/>
+</dict>
+</plist>

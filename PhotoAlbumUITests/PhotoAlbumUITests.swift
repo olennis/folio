@@ -14,6 +14,8 @@ final class PhotoAlbumUITests: XCTestCase {
         let library = app.tabBars.firstMatch.buttons["보관함"]
         XCTAssertTrue(library.waitForExistence(timeout: 15))
         library.tap()
+        // 켜진 직후의 탭이 가끔 먹히지 않는다. 보관함이 안 뜨면 한 번 더 누른다.
+        if !app.navigationBars["보관함"].waitForExistence(timeout: 5) { library.tap() }
         XCTAssertTrue(app.navigationBars["보관함"].waitForExistence(timeout: 15))
         XCTAssertTrue(frontCard.waitForExistence(timeout: 15), "예시 앨범이 보여야 한다")
     }
@@ -253,5 +255,107 @@ final class PhotoAlbumUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["검색 결과"].waitForExistence(timeout: 5)
             || app.staticTexts["검색 결과".uppercased()].exists)
         XCTAssertFalse(app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "캠핑 모음")).firstMatch.exists)
+    }
+
+    // MARK: Folio Pro
+
+    /// 앱을 주어진 실행 인자로 다시 켜고 보관함으로 간다.
+    private func relaunch(_ arguments: [String]) {
+        app.terminate()
+        app.launchArguments = ["-seedDemo"] + arguments
+        app.launch()
+        let library = app.tabBars.firstMatch.buttons["보관함"]
+        XCTAssertTrue(library.waitForExistence(timeout: 15))
+        library.tap()
+        XCTAssertTrue(app.navigationBars["보관함"].waitForExistence(timeout: 10))
+    }
+
+    private var albumCount: Int {
+        let position = app.staticTexts["deck-position"]
+        guard position.waitForExistence(timeout: 5) else { return 1 }
+        return Int(position.label.split(separator: "/").last?.trimmingCharacters(in: .whitespaces) ?? "") ?? 0
+    }
+
+    private func tapNewAlbum() {
+        app.navigationBars["보관함"].buttons["새로운 앨범"].tap()
+    }
+
+    /// 무료 한도(5개)까지 앨범을 채운다. 만든 앨범 이름을 돌려준다.
+    private func fillToFreeLimit() -> [String] {
+        var created: [String] = []
+        while albumCount < 5 {
+            let name = "Pro 테스트 \(created.count + 1)"
+            tapNewAlbum()
+            let field = app.alerts.textFields.firstMatch
+            XCTAssertTrue(field.waitForExistence(timeout: 5), "한도 전에는 앨범 만들기 창이 떠야 한다")
+            field.typeText(name)
+            app.alerts.buttons["만들기"].tap()
+            created.append(name)
+            sleep(1)
+        }
+        return created
+    }
+
+    /// 테스트가 만든 앨범을 지워 예시 데이터를 원래대로 돌려놓는다. 새 앨범은 늘 맨 앞에 온다.
+    private func deleteAlbums(_ names: [String]) {
+        for name in names.reversed() {
+            let card = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", name)).firstMatch
+            guard card.waitForExistence(timeout: 5) else { continue }
+            card.press(forDuration: 1.0)
+            let delete = app.buttons["앨범 삭제"].firstMatch
+            XCTAssertTrue(delete.waitForExistence(timeout: 5))
+            delete.tap()
+            let confirm = app.buttons.matching(NSPredicate(format: "label == %@", "앨범 삭제")).element(boundBy: 0)
+            XCTAssertTrue(confirm.waitForExistence(timeout: 5))
+            confirm.tap()
+            sleep(1)
+        }
+    }
+
+    func testFreeUserHitsAlbumLimitAndSeesPaywall() {
+        relaunch(["-forcePro", "NO"])
+        let created = fillToFreeLimit()
+        tapNewAlbum()
+        let headline = app.staticTexts["paywall-headline"]
+        XCTAssertTrue(headline.waitForExistence(timeout: 5), "무료 한도를 넘기면 결제 화면이 떠야 한다")
+        XCTAssertTrue(headline.label.contains("5개까지"), headline.label)
+        XCTAssertTrue(app.buttons["구매 복원"].exists, "구매 복원은 늘 있어야 한다")
+        let buy = app.buttons["paywall-buy"]
+        XCTAssertTrue(buy.waitForExistence(timeout: 5))
+        print("PAYWALL buy button:", buy.label)
+        shot("14-paywall")
+        app.buttons["닫기"].tap()
+        XCTAssertFalse(app.alerts.firstMatch.exists, "결제 화면을 닫으면 앨범 만들기 창이 뜨면 안 된다")
+        deleteAlbums(created)
+    }
+
+    func testProUserHasNoAlbumLimit() {
+        relaunch(["-forcePro", "YES"])
+        let created = fillToFreeLimit()
+        tapNewAlbum()
+        XCTAssertTrue(app.alerts["새로운 앨범"].waitForExistence(timeout: 5), "Pro는 한도 없이 앨범을 만든다")
+        XCTAssertFalse(app.staticTexts["paywall-headline"].exists)
+        app.alerts.buttons["취소"].tap()
+
+        app.tabBars.firstMatch.buttons["홈"].tap()
+        XCTAssertTrue(app.buttons["pro-button"].waitForExistence(timeout: 5))
+        XCTAssertEqual(app.buttons["pro-button"].label, "Folio Pro 사용 중")
+        app.tabBars.firstMatch.buttons["보관함"].tap()
+        deleteAlbums(created)
+    }
+
+    func testHomeTeasesMemoriesForFreeUsers() {
+        // 예시 사진 가운데 2012년 8월 9일 사진이 있어, 이날로 맞추면 "N년 전 오늘"이 생긴다.
+        relaunch(["-forcePro", "NO", "-today", "2018-08-09"])
+        app.tabBars.firstMatch.buttons["홈"].tap()
+        let locked = app.buttons["locked-feature"]
+        XCTAssertTrue(locked.waitForExistence(timeout: 10), "무료 사용자에게는 추천이 잠긴 카드로 보여야 한다")
+        XCTAssertTrue(locked.label.contains("년 전"), locked.label)
+        shot("15-home-locked")
+        locked.tap()
+        let headline = app.staticTexts["paywall-headline"]
+        XCTAssertTrue(headline.waitForExistence(timeout: 5))
+        XCTAssertTrue(headline.label.contains("몇 년 전 오늘"), headline.label)
+        app.buttons["닫기"].tap()
     }
 }

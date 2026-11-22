@@ -24,6 +24,8 @@ struct LibraryView: View {
     @State private var isDragging = false
 
     @State private var showCreate = false
+    @ObservedObject private var pro = ProStore.shared
+    @State private var paywall: ProPaywall.Reason?
     @State private var renaming: Album?
     @State private var deleting: Album?
     @State private var draftTitle = ""
@@ -85,6 +87,7 @@ struct LibraryView: View {
                 AlbumDetailView(album: album)
                     .zoomDestination(id: album.id, in: zoom)
             }
+            .sheet(item: $paywall) { ProPaywall(reason: $0) }
             .alert("새로운 앨범", isPresented: $showCreate) {
                 TextField("앨범 이름", text: $draftTitle)
                 Button("취소", role: .cancel) {}
@@ -244,6 +247,11 @@ struct LibraryView: View {
     }
 
     private func beginCreate() {
+        // 무료로는 앨범을 몇 개까지만 만든다. 그 이상은 결제 화면을 연다.
+        guard pro.canCreateAlbum(currentCount: allAlbums.count) else {
+            paywall = .albumLimit
+            return
+        }
         draftTitle = ""
         showCreate = true
     }

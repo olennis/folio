@@ -4,7 +4,7 @@ import SwiftUI
 /// Folio Pro 결제 화면. 어디서 열렸는지에 따라 첫 문장만 바뀐다.
 struct ProPaywall: View {
     enum Reason: String, Identifiable {
-        case albumLimit, suggestions, memories, upgrade
+        case albumLimit, suggestions, memories, autoClassify, upgrade
         var id: String { rawValue }
 
         var headline: String {
@@ -15,6 +15,8 @@ struct ProPaywall: View {
                 "사진을 넣을 때 날짜와 장소가 맞는 앨범을 골라 드려요."
             case .memories:
                 "몇 년 전 오늘 찍은 사진이 든 앨범을 홈에 꺼내 드려요."
+            case .autoClassify:
+                "사진을 연도·여행·장면별로 알아서 묶어 앨범을 제안해 드려요."
             case .upgrade:
                 "앨범을 제한 없이 만들고, 앨범 추천과 지난 오늘을 받아 보세요."
             }
@@ -75,6 +77,7 @@ struct ProPaywall: View {
     private var features: some View {
         VStack(alignment: .leading, spacing: 18) {
             row("rectangle.stack.badge.plus", "앨범 무제한", "연도, 인물, 여행마다 앨범을 원하는 만큼 만드세요.")
+            row("wand.and.stars", "자동 분류", "연도, 여행, 반려동물·음식·바다·산 사진을 알아서 묶어 드려요. 분석은 기기 안에서만 해요.")
             row("sparkles", "앨범 추천", "사진을 넣을 때 날짜와 장소가 맞는 앨범을 먼저 보여 드려요.")
             row("clock.arrow.circlepath", "지난 오늘과 자주 보는 인물", "몇 년 전 오늘의 앨범과 자주 여는 인물 앨범을 홈에 꺼내 드려요.")
             row("checkmark.seal", "한 번 결제", "구독이 아니에요. 가족 공유로 가족과 함께 쓸 수 있어요.")

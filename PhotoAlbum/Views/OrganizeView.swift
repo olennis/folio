@@ -7,6 +7,7 @@ struct OrganizeView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Query private var photos: [Photo]
     @ObservedObject private var access = PhotoAccess.shared
+    @ObservedObject private var pro = ProStore.shared
 
     @Environment(\.modelContext) private var context
     /// 미정리 사진. 보관함 전체를 훑어야 해서 백그라운드에서 구한다.
@@ -43,10 +44,13 @@ struct OrganizeView: View {
                 } else if !loaded {
                     ProgressView()
                 } else if items.isEmpty {
-                    ContentUnavailableView {
-                        Label("모두 정리했습니다", systemImage: "checkmark.circle")
-                    } description: {
-                        Text("사진 보관함의 모든 사진이 앨범에 들어 있습니다.")
+                    ScrollView {
+                        AutoClassifySection()
+                        ContentUnavailableView {
+                            Label("모두 정리했습니다", systemImage: "checkmark.circle")
+                        } description: {
+                            Text("사진 보관함의 모든 사진이 앨범에 들어 있습니다.")
+                        }
                     }
                 } else {
                     grid(items)
@@ -94,7 +98,9 @@ struct OrganizeView: View {
             .sensoryFeedback(.success, trigger: addedCount)
             .task(id: LoadKey(status: access.status.rawValue, photoCount: photos.count, token: reloadToken)) {
                 await load()
+                refreshAuto()
             }
+            .onChange(of: pro.isPro) { _, _ in refreshAuto() }
             // 다른 앱에서 사진이 늘었을 수 있으니 탭에 들어올 때마다 다시 본다.
             .onAppear { if loaded { reloadToken += 1 } }
         }
@@ -102,6 +108,7 @@ struct OrganizeView: View {
 
     private func grid(_ items: [String]) -> some View {
         ScrollView {
+            AutoClassifySection()
             Text("미정리 사진 \(items.count.formatted())장 · 아직 어느 앨범에도 없는 사진")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
@@ -138,6 +145,14 @@ struct OrganizeView: View {
         .buttonStyle(PressableStyle(scale: 0.96))
         .accessibilityLabel(Text("미정리 사진"))
         .accessibilityAddTraits(traits)
+    }
+
+    /// 자동 분류 제안을 다시 구한다. Pro면 장면 분석도 이어 간다.
+    private func refreshAuto() {
+        guard access.status == .authorized || access.status == .limited else { return }
+        let model = AutoClassifyModel.shared
+        model.refresh(container: context.container)
+        if pro.isPro { model.startSceneAnalysis(container: context.container) }
     }
 
     private func load() async {

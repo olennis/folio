@@ -7,7 +7,8 @@ final class PhotoAlbumUITests: XCTestCase {
 
     override func setUp() {
         continueAfterFailure = false
-        app.launchArguments = ["-seedDemo"]
+        // 실기기용으로 기억해 둔 Pro 강제 값이 테스트 사이에 남지 않게 지우고 시작한다.
+        app.launchArguments = ["-seedDemo", "-forcePro", "CLEAR"]
         app.launch()
         allowPhotosIfAsked()
         // 앱은 홈에서 시작한다. 대부분의 테스트는 보관함에서 출발한다.

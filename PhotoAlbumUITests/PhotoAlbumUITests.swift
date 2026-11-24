@@ -426,7 +426,6 @@ final class PhotoAlbumUITests: XCTestCase {
         XCTAssertTrue(headline.label.contains("연도·여행·장면"), headline.label)
         app.buttons["닫기"].tap()
     }
-    }
 
     /// 앨범 메뉴의 "표지 바꾸기"로 표지를 고르고, 첫 사진으로 되돌린다.
     func testCoverCanBeChosenAndReset() {

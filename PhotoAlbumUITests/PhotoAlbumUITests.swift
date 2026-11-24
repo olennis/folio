@@ -393,5 +393,24 @@ final class PhotoAlbumUITests: XCTestCase {
         XCTAssertFalse(app.buttons["cover-reset"].exists)
         app.buttons["닫기"].tap()
     }
+
+    /// 결제 화면의 버튼은 모두 같은 높이여야 한다(가격을 불러온 때와 못 불러온 때 모두).
+    func testPaywallButtonsShareOneHeight() {
+        for unavailable in [false, true] {
+            relaunch(["-forcePro", "NO"] + (unavailable ? ["-storeUnavailable", "YES"] : []))
+            app.tabBars.firstMatch.buttons["홈"].tap()
+            app.buttons["pro-button"].tap()
+            let primary = app.buttons[unavailable ? "paywall-reload" : "paywall-buy"]
+            let restore = app.buttons["paywall-restore"]
+            XCTAssertTrue(primary.waitForExistence(timeout: 5))
+            XCTAssertTrue(restore.exists)
+            print("PAYWALL heights:", primary.frame.height, restore.frame.height, "widths:", primary.frame.width, restore.frame.width)
+            XCTAssertEqual(primary.frame.height, restore.frame.height, accuracy: 0.5)
+            XCTAssertEqual(primary.frame.width, restore.frame.width, accuracy: 0.5)
+            XCTAssertGreaterThanOrEqual(restore.frame.height, 44, "누르기 쉬운 크기(44pt 이상)")
+            shot(unavailable ? "17-paywall-unavailable" : "16-paywall-buttons")
+            app.buttons["닫기"].tap()
+        }
+    }
 }
 

@@ -11,6 +11,15 @@ struct AlbumDetailView: View {
     let album: Album
 
     @State private var currentID: UUID?
+    /// 아래 사진 줄에서 가운데 온 사진. 끌어서 바꾸면 `currentID`가 따라간다.
+    @State private var stripID: UUID?
+    @State private var scrubTicks = 0
+    /// 위 캐러셀의 위치. 사용자가 넘기면 `currentID`가 따라가고, 다른 곳에서 바뀌면 이쪽이 따라간다.
+    @State private var carouselID: UUID?
+    /// 캐러셀·줄이 스스로 따라 움직이는 중인 횟수. 그동안 알려 오는 위치는 사용자가 고른 것이 아니다.
+    /// 빠르게 여러 번 바뀌면 움직임이 겹치므로 참거짓 대신 센다.
+    @State private var syncingCarousel = 0
+    @State private var syncingStrip = 0
     @State private var pickerItems: [PhotosPickerItem] = []
     @State private var showViewer = false
     @State private var editingAlbumsOf: Photo?
@@ -64,6 +73,7 @@ struct AlbumDetailView: View {
             }
         }
         .overlay(alignment: .bottom) { undoBanner.padding(.bottom, 84) }
+        .onChange(of: currentID) { _, id in follow(id) }
         .navigationTitle(album.title)
         .navigationBarTitleDisplayMode(.large)
         .toolbar {
@@ -165,10 +175,15 @@ struct AlbumDetailView: View {
                 .frame(height: geo.size.height)
             }
             .scrollTargetBehavior(.viewAligned)
-            .scrollPosition(id: $currentID)
+            .scrollPosition(id: $carouselID)
             .safeAreaPadding(.horizontal, 64)
             .scrollIndicators(.hidden)
             .scrollClipDisabled()
+        }
+        .onAppear { carouselID = currentID ?? links.first?.id }
+        .onChange(of: carouselID) { _, id in
+            guard syncingCarousel == 0, let id, id != currentID else { return }
+            currentID = id
         }
     }
 
@@ -220,43 +235,69 @@ struct AlbumDetailView: View {
         .padding(.top, 4)
     }
 
-    /// 사진 앱의 스크러버처럼 지금 사진을 가운데에 크게 둔다.
+    /// 사진 앱의 스크러버처럼 동작한다. 끌면 가운데 온 사진이 지금 사진이 되고, 위 캐러셀이 따라간다.
+    /// 캐러셀을 넘기면 반대로 이 줄이 따라온다. 누르면 그 사진으로 건너뛴다.
     private func filmstrip(_ links: [AlbumPhoto], current: AlbumPhoto?) -> some View {
         GeometryReader { geo in
-            ScrollViewReader { proxy in
-                ScrollView(.horizontal) {
-                    LazyHStack(spacing: 3) {
-                        ForEach(Array(links.enumerated()), id: \.element.id) { index, link in
-                            thumb(link, index: index, isCurrent: link.id == current?.id)
-                        }
+            ScrollView(.horizontal) {
+                LazyHStack(spacing: Self.thumbSpacing) {
+                    ForEach(Array(links.enumerated()), id: \.element.id) { index, link in
+                        thumb(link, index: index, isCurrent: link.id == current?.id)
                     }
-                    .animation(settle, value: current?.id)
                 }
-                .contentMargins(.horizontal, max((geo.size.width - 56) / 2, 0), for: .scrollContent)
-                .scrollIndicators(.hidden)
-                .onAppear { proxy.scrollTo(current?.id, anchor: .center) }
-                .onChange(of: current?.id) { _, id in
-                    withAnimation(settle) { proxy.scrollTo(id, anchor: .center) }
-                }
+                .scrollTargetLayout()
             }
+            // 썸네일 하나가 정확히 가운데 오도록 양옆을 비운다.
+            .contentMargins(.horizontal, max((geo.size.width - Self.thumbWidth) / 2, 0), for: .scrollContent)
+            .scrollTargetBehavior(.viewAligned)
+            .scrollPosition(id: $stripID, anchor: .center)
+            .scrollIndicators(.hidden)
+            .accessibilityIdentifier("filmstrip")
         }
-        .frame(height: 44)
-        .padding(.vertical, 12)
+        .frame(height: 52)
+        .padding(.vertical, 8)
+        .onAppear { stripID = currentID ?? links.first?.id }
+        // 줄을 끌어 가운데 사진이 바뀌면 그 사진을 고른다.
+        .onChange(of: stripID) { _, id in
+            guard syncingStrip == 0, let id, id != currentID else { return }
+            scrubTicks += 1
+            currentID = id
+        }
+        .sensoryFeedback(.selection, trigger: scrubTicks)
+    }
+
+    private static let thumbWidth: CGFloat = 34
+    private static let thumbSpacing: CGFloat = 4
+
+    /// 지금 사진이 바뀌면 캐러셀과 아래 줄을 그 사진으로 옮긴다. 이미 그 자리인 쪽은 두고, 움직이는 동안의 위치 소식은 무시한다.
+    private func follow(_ id: UUID?) {
+        if carouselID != id {
+            syncingCarousel += 1
+            withAnimation(settle) { carouselID = id } completion: { syncingCarousel -= 1 }
+        }
+        if stripID != id {
+            syncingStrip += 1
+            withAnimation(settle) { stripID = id } completion: { syncingStrip -= 1 }
+        }
     }
 
     private func thumb(_ link: AlbumPhoto, index: Int, isCurrent: Bool) -> some View {
-        let width: CGFloat = isCurrent ? 44 : 30
-        let radius: CGFloat = isCurrent ? 6 : 3
         let traits: AccessibilityTraits = isCurrent ? .isSelected : []
+        let shape = RoundedRectangle(cornerRadius: isCurrent ? 5 : 3, style: .continuous)
         return Button {
             withAnimation(settle) { currentID = link.id }
         } label: {
+            // 크기는 모두 같게 두고 지금 사진만 키워 보인다. 끄는 도중에 줄의 길이가 바뀌면 덜컹거린다.
             AssetImage(id: link.photo?.assetIdentifier ?? "", pixels: 160)
-                .frame(width: width, height: 44)
-                .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
+                .frame(width: Self.thumbWidth, height: 44)
+                .clipShape(shape)
+                .overlay { if isCurrent { shape.strokeBorder(Color.accentColor, lineWidth: 2) } }
+                .opacity(isCurrent ? 1 : 0.8)
         }
         .buttonStyle(PressableStyle(scale: 0.92))
-        .padding(.horizontal, isCurrent ? 6 : 0)
+        .scaleEffect(isCurrent ? 1.18 : 1)
+        .zIndex(isCurrent ? 1 : 0)
+        .animation(settle, value: isCurrent)
         .id(link.id)
         .accessibilityLabel(Text(verbatim: "사진 \(index + 1)"))
         .accessibilityAddTraits(traits)

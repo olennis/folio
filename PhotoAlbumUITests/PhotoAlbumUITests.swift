@@ -358,4 +358,39 @@ final class PhotoAlbumUITests: XCTestCase {
         XCTAssertTrue(headline.label.contains("몇 년 전 오늘"), headline.label)
         app.buttons["닫기"].tap()
     }
+
+    /// 아래 사진 줄을 끌면 가운데 온 사진이 고른 사진이 된다. 캐러셀을 넘기면 줄이 따라온다.
+    func testFilmstripScrubSelectsPhoto() {
+        openFrontAlbum()
+        let position = app.staticTexts["album-position"]
+        XCTAssertTrue(position.waitForExistence(timeout: 5))
+        XCTAssertTrue(position.label.hasPrefix("1 / 3"), position.label)
+
+        // 줄을 왼쪽으로 끝까지 끌면 마지막(세 번째) 사진이 가운데 온다.
+        let strip = app.scrollViews["filmstrip"]
+        XCTAssertTrue(strip.exists)
+        let start = strip.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        start.press(forDuration: 0.1, thenDragTo: start.withOffset(CGVector(dx: -160, dy: 0)),
+                    withVelocity: .slow, thenHoldForDuration: 0.2)
+        sleep(1)
+        XCTAssertTrue(position.label.hasPrefix("3 / 3"), "끌어서 고른 사진이 지금 사진이 되어야 한다: \(position.label)")
+        XCTAssertTrue(app.buttons["사진 3"].isSelected)
+        // 글자만이 아니라 위 캐러셀도 세 번째 사진을 가운데에 보여야 한다.
+        let screenMid = app.windows.firstMatch.frame.midX
+        XCTAssertEqual(app.buttons["carousel-photo-3"].frame.midX, screenMid, accuracy: 4, "캐러셀이 고른 사진으로 옮겨 가야 한다")
+        shot("21-filmstrip-scrub")
+
+        // 캐러셀을 오른쪽으로 넘기면(이전 사진) 줄의 선택도 따라온다.
+        app.buttons["carousel-photo-3"].swipeRight()
+        sleep(1)
+        XCTAssertTrue(position.label.hasPrefix("2 / 3"), position.label)
+        XCTAssertTrue(app.buttons["사진 2"].isSelected, "캐러셀을 넘기면 줄의 선택도 바뀌어야 한다")
+        XCTAssertEqual(app.buttons["carousel-photo-2"].frame.midX, screenMid, accuracy: 4)
+
+        // 누르기도 그대로 된다.
+        app.buttons["사진 1"].tap()
+        sleep(1)
+        XCTAssertTrue(position.label.hasPrefix("1 / 3"), position.label)
+    }
 }
+

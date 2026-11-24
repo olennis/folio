@@ -28,6 +28,7 @@ struct LibraryView: View {
     @State private var paywall: ProPaywall.Reason?
     @State private var renaming: Album?
     @State private var deleting: Album?
+    @State private var choosingCover: Album?
     @State private var draftTitle = ""
 
     private var store: AlbumStore { AlbumStore(context: context) }
@@ -88,6 +89,7 @@ struct LibraryView: View {
                     .zoomDestination(id: album.id, in: zoom)
             }
             .sheet(item: $paywall) { ProPaywall(reason: $0) }
+            .sheet(item: $choosingCover) { CoverPickerSheet(album: $0) }
             .alert("새로운 앨범", isPresented: $showCreate) {
                 TextField("앨범 이름", text: $draftTitle)
                 Button("취소", role: .cancel) {}
@@ -238,6 +240,8 @@ struct LibraryView: View {
             draftTitle = album.title
             renaming = album
         }
+        Button("표지 바꾸기…", systemImage: "photo.badge.checkmark") { choosingCover = album }
+            .disabled(album.photoCount == 0)
         KindPicker(album: album)
         Button("앨범 삭제", systemImage: "trash", role: .destructive) { deleting = album }
     }

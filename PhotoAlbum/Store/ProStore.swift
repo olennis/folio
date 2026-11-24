@@ -45,7 +45,19 @@ final class ProStore: ObservableObject {
         self.productID = productID
         #if DEBUG
         // 실행 인자 `-forcePro YES`는 문자열로 들어오므로 bool(forKey:)로 읽는다.
-        forced = defaults.object(forKey: "forcePro") == nil ? nil : defaults.bool(forKey: "forcePro")
+        // 실기기에서 한 번 이 인자로 켜면 기억해 두어, 홈 화면에서 다시 열어도 유지한다(`-forcePro CLEAR`로 지움).
+        let savedKey = "debug.forcePro"
+        if let argument = defaults.string(forKey: "forcePro") {
+            if argument == "CLEAR" {
+                defaults.removeObject(forKey: savedKey)
+                forced = nil
+            } else {
+                forced = defaults.bool(forKey: "forcePro")
+                defaults.set(forced, forKey: savedKey)
+            }
+        } else {
+            forced = defaults.object(forKey: savedKey) as? Bool
+        }
         #else
         forced = nil
         #endif
@@ -97,6 +109,14 @@ final class ProStore: ObservableObject {
 
     func loadProduct() async {
         productState = .loading
+        #if DEBUG
+        // 캡처와 UI 테스트용: 가격을 못 불러온 상태(App Store Connect에 상품이 없을 때와 같음).
+        if defaults.bool(forKey: "storeUnavailable") {
+            product = nil
+            productState = .unavailable
+            return
+        }
+        #endif
         do {
             product = try await Product.products(for: [productID]).first
             productState = product == nil ? .unavailable : .loaded

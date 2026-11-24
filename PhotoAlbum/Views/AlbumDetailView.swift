@@ -23,6 +23,7 @@ struct AlbumDetailView: View {
     @State private var pickerItems: [PhotosPickerItem] = []
     @State private var showViewer = false
     @State private var editingAlbumsOf: Photo?
+    @State private var choosingCover = false
     @State private var showRename = false
     @State private var confirmDelete = false
     @State private var draftTitle = ""
@@ -88,6 +89,8 @@ struct AlbumDetailView: View {
                             draftTitle = album.title
                             showRename = true
                         }
+                        Button("표지 바꾸기…", systemImage: "photo.badge.checkmark") { choosingCover = true }
+                            .disabled(links.isEmpty)
                         KindPicker(album: album)
                         Button("앨범 삭제", systemImage: "trash", role: .destructive) { confirmDelete = true }
                     }
@@ -103,6 +106,7 @@ struct AlbumDetailView: View {
                 .zoomDestination(id: currentID, in: zoom)
         }
         .sheet(item: $editingAlbumsOf) { AlbumPickerSheet(photo: $0) }
+        .sheet(isPresented: $choosingCover) { CoverPickerSheet(album: album) }
         .alert("이름 변경", isPresented: $showRename) {
             TextField("앨범 이름", text: $draftTitle)
             Button("취소", role: .cancel) {}
@@ -311,9 +315,11 @@ struct AlbumDetailView: View {
             draftPhotoTitle = link.photo?.title ?? ""
             titling = link.photo
         }
-        Button("앨범 표지로 설정", systemImage: "photo") {
+        let isCover = link.photo?.assetIdentifier == album.coverIdentifier
+        Button(isCover ? "지금 표지예요" : "앨범 표지로 설정", systemImage: isCover ? "checkmark.circle" : "photo") {
             store.setCover(album, to: link.photo)
         }
+        .disabled(isCover)
         Button("앞으로 옮기기", systemImage: "arrow.left") {
             withAnimation(settle) { store.move(link, by: -1) }
         }

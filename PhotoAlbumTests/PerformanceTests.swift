@@ -73,4 +73,25 @@ final class PerformanceTests: XCTestCase {
         }
         XCTAssertLessThan(memories, 300)
     }
+
+    func testAutoClassifyThirtyThousandPhotos() {
+        // 일상 사진 3만 장(서울) 사이사이에 여행(제주)이 섞인 보관함.
+        var photos: [LibraryPhoto] = []
+        for index in 0..<30000 {
+            let date = Date(timeIntervalSince1970: 1_300_000_000 + Double(index) * 4000)
+            let away = index % 1000 < 40
+            photos.append(LibraryPhoto(
+                id: "p\(index)", takenAt: date,
+                latitude: away ? 33.5 : 37.56, longitude: away ? 126.53 : 126.97,
+                scenes: index % 50 == 0 ? [.food] : []
+            ))
+        }
+        var found: [AutoSuggestion] = []
+        let ms = time("auto classify 30,000 photos") {
+            found = AutoClassifier.suggestions(photos: photos, albums: [])
+        }
+        XCTAssertFalse(found.isEmpty)
+        XCTAssertLessThan(ms, 1000)
+    }
 }
+

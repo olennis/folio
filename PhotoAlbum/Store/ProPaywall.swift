@@ -4,7 +4,7 @@ import SwiftUI
 /// Folio Pro 결제 화면. 어디서 열렸는지에 따라 첫 문장만 바뀐다.
 struct ProPaywall: View {
     enum Reason: String, Identifiable {
-        case albumLimit, suggestions, memories, upgrade
+        case albumLimit, suggestions, memories, autoClassify, upgrade
         var id: String { rawValue }
 
         var headline: String {
@@ -15,6 +15,8 @@ struct ProPaywall: View {
                 "사진을 넣을 때 날짜와 장소가 맞는 앨범을 골라 드려요."
             case .memories:
                 "몇 년 전 오늘 찍은 사진이 든 앨범을 홈에 꺼내 드려요."
+            case .autoClassify:
+                "사진을 연도·여행·장면별로 알아서 묶어 앨범을 제안해 드려요."
             case .upgrade:
                 "앨범을 제한 없이 만들고, 앨범 추천과 지난 오늘을 받아 보세요."
             }
@@ -75,6 +77,7 @@ struct ProPaywall: View {
     private var features: some View {
         VStack(alignment: .leading, spacing: 18) {
             row("rectangle.stack.badge.plus", "앨범 무제한", "연도, 인물, 여행마다 앨범을 원하는 만큼 만드세요.")
+            row("wand.and.stars", "자동 분류", "연도, 여행, 반려동물·음식·바다·산 사진을 알아서 묶어 드려요. 분석은 기기 안에서만 해요.")
             row("sparkles", "앨범 추천", "사진을 넣을 때 날짜와 장소가 맞는 앨범을 먼저 보여 드려요.")
             row("clock.arrow.circlepath", "지난 오늘과 자주 보는 인물", "몇 년 전 오늘의 앨범과 자주 여는 인물 앨범을 홈에 꺼내 드려요.")
             row("checkmark.seal", "한 번 결제", "구독이 아니에요. 가족 공유로 가족과 함께 쓸 수 있어요.")
@@ -99,46 +102,46 @@ struct ProPaywall: View {
 
     @ViewBuilder
     private var actions: some View {
+        // 모든 버튼은 같은 높이의 전체 너비 캡슐이다. 주된 동작만 채운 색, 나머지는 옅은 배경.
         VStack(spacing: 10) {
             if store.isPro {
-                Button {
-                    dismiss()
-                } label: {
-                    Text("완료").font(.headline).frame(maxWidth: .infinity, minHeight: 30)
-                }
-                .buttonStyle(.borderedProminent)
-                .buttonBorderShape(.capsule)
+                Button { dismiss() } label: { ActionLabel("완료") }
+                    .buttonStyle(.borderedProminent)
+                    .buttonBorderShape(.capsule)
             } else {
-                Button(action: buy) {
-                    ZStack {
-                        Text(purchaseTitle).font(.headline).opacity(store.isWorking ? 0 : 1)
-                        if store.isWorking { ProgressView() }
-                    }
-                    .frame(maxWidth: .infinity, minHeight: 30)
-                }
-                .buttonStyle(.borderedProminent)
-                .buttonBorderShape(.capsule)
-                .disabled(store.product == nil || store.isWorking)
-                .accessibilityIdentifier("paywall-buy")
-
                 if store.productState == .unavailable {
-                    Button("다시 불러오기") { Task { await store.loadProduct() } }
-                        .font(.subheadline)
+                    Text("가격을 불러오지 못했어요. 인터넷 연결을 확인해 주세요.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                    // 살 수 없을 때 죽은 구매 버튼 대신, 주 버튼이 다시 불러온다.
+                    Button { Task { await store.loadProduct() } } label: { ActionLabel("다시 불러오기") }
+                        .buttonStyle(.borderedProminent)
+                        .buttonBorderShape(.capsule)
+                        .accessibilityIdentifier("paywall-reload")
+                } else {
+                    Button(action: buy) { ActionLabel(purchaseTitle, working: store.isWorking) }
+                        .buttonStyle(.borderedProminent)
+                        .buttonBorderShape(.capsule)
+                        .disabled(store.product == nil || store.isWorking)
+                        .accessibilityIdentifier("paywall-buy")
                 }
-                Button("구매 복원", action: restore)
-                    .font(.subheadline)
+                Button(action: restore) { ActionLabel("구매 복원") }
+                    .buttonStyle(.bordered)
+                    .buttonBorderShape(.capsule)
                     .disabled(store.isWorking)
+                    .accessibilityIdentifier("paywall-restore")
             }
         }
         .padding(.horizontal, 24)
         .padding(.top, 12)
         .padding(.bottom, 8)
-        .background(.bar)
+        // 회색 막대 위에서는 보조 버튼의 옅은 배경이 묻힌다. 화면 바탕색 위에 둔다.
+        .background(Color(.systemBackground))
     }
 
     private var purchaseTitle: String {
-        if let product = store.product { return "\(product.displayPrice)에 Pro 열기" }
-        return store.productState == .unavailable ? "지금은 구매할 수 없어요" : "가격을 불러오는 중…"
+        store.product.map { "\($0.displayPrice)에 Pro 열기" } ?? "가격을 불러오는 중…"
     }
 
     private func buy() {
@@ -164,5 +167,24 @@ struct ProPaywall: View {
                 notice = "이 Apple 계정으로 산 Folio Pro를 찾지 못했어요."
             }
         }
+    }
+}
+
+/// 결제 화면 버튼의 안쪽. 모든 버튼이 같은 높이(50pt)와 전체 너비를 갖게 한다.
+private struct ActionLabel: View {
+    let title: String
+    var working = false
+
+    init(_ title: String, working: Bool = false) {
+        self.title = title
+        self.working = working
+    }
+
+    var body: some View {
+        ZStack {
+            Text(title).font(.headline).opacity(working ? 0 : 1)
+            if working { ProgressView() }
+        }
+        .frame(maxWidth: .infinity, minHeight: 36)
     }
 }

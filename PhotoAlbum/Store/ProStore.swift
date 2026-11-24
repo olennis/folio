@@ -109,6 +109,14 @@ final class ProStore: ObservableObject {
 
     func loadProduct() async {
         productState = .loading
+        #if DEBUG
+        // 캡처와 UI 테스트용: 가격을 못 불러온 상태(App Store Connect에 상품이 없을 때와 같음).
+        if defaults.bool(forKey: "storeUnavailable") {
+            product = nil
+            productState = .unavailable
+            return
+        }
+        #endif
         do {
             product = try await Product.products(for: [productID]).first
             productState = product == nil ? .unavailable : .loaded

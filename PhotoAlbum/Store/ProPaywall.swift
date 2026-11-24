@@ -102,46 +102,46 @@ struct ProPaywall: View {
 
     @ViewBuilder
     private var actions: some View {
+        // 모든 버튼은 같은 높이의 전체 너비 캡슐이다. 주된 동작만 채운 색, 나머지는 옅은 배경.
         VStack(spacing: 10) {
             if store.isPro {
-                Button {
-                    dismiss()
-                } label: {
-                    Text("완료").font(.headline).frame(maxWidth: .infinity, minHeight: 30)
-                }
-                .buttonStyle(.borderedProminent)
-                .buttonBorderShape(.capsule)
+                Button { dismiss() } label: { ActionLabel("완료") }
+                    .buttonStyle(.borderedProminent)
+                    .buttonBorderShape(.capsule)
             } else {
-                Button(action: buy) {
-                    ZStack {
-                        Text(purchaseTitle).font(.headline).opacity(store.isWorking ? 0 : 1)
-                        if store.isWorking { ProgressView() }
-                    }
-                    .frame(maxWidth: .infinity, minHeight: 30)
-                }
-                .buttonStyle(.borderedProminent)
-                .buttonBorderShape(.capsule)
-                .disabled(store.product == nil || store.isWorking)
-                .accessibilityIdentifier("paywall-buy")
-
                 if store.productState == .unavailable {
-                    Button("다시 불러오기") { Task { await store.loadProduct() } }
-                        .font(.subheadline)
+                    Text("가격을 불러오지 못했어요. 인터넷 연결을 확인해 주세요.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                    // 살 수 없을 때 죽은 구매 버튼 대신, 주 버튼이 다시 불러온다.
+                    Button { Task { await store.loadProduct() } } label: { ActionLabel("다시 불러오기") }
+                        .buttonStyle(.borderedProminent)
+                        .buttonBorderShape(.capsule)
+                        .accessibilityIdentifier("paywall-reload")
+                } else {
+                    Button(action: buy) { ActionLabel(purchaseTitle, working: store.isWorking) }
+                        .buttonStyle(.borderedProminent)
+                        .buttonBorderShape(.capsule)
+                        .disabled(store.product == nil || store.isWorking)
+                        .accessibilityIdentifier("paywall-buy")
                 }
-                Button("구매 복원", action: restore)
-                    .font(.subheadline)
+                Button(action: restore) { ActionLabel("구매 복원") }
+                    .buttonStyle(.bordered)
+                    .buttonBorderShape(.capsule)
                     .disabled(store.isWorking)
+                    .accessibilityIdentifier("paywall-restore")
             }
         }
         .padding(.horizontal, 24)
         .padding(.top, 12)
         .padding(.bottom, 8)
-        .background(.bar)
+        // 회색 막대 위에서는 보조 버튼의 옅은 배경이 묻힌다. 화면 바탕색 위에 둔다.
+        .background(Color(.systemBackground))
     }
 
     private var purchaseTitle: String {
-        if let product = store.product { return "\(product.displayPrice)에 Pro 열기" }
-        return store.productState == .unavailable ? "지금은 구매할 수 없어요" : "가격을 불러오는 중…"
+        store.product.map { "\($0.displayPrice)에 Pro 열기" } ?? "가격을 불러오는 중…"
     }
 
     private func buy() {
@@ -167,5 +167,24 @@ struct ProPaywall: View {
                 notice = "이 Apple 계정으로 산 Folio Pro를 찾지 못했어요."
             }
         }
+    }
+}
+
+/// 결제 화면 버튼의 안쪽. 모든 버튼이 같은 높이(50pt)와 전체 너비를 갖게 한다.
+private struct ActionLabel: View {
+    let title: String
+    var working = false
+
+    init(_ title: String, working: Bool = false) {
+        self.title = title
+        self.working = working
+    }
+
+    var body: some View {
+        ZStack {
+            Text(title).font(.headline).opacity(working ? 0 : 1)
+            if working { ProgressView() }
+        }
+        .frame(maxWidth: .infinity, minHeight: 36)
     }
 }

@@ -426,5 +426,60 @@ final class PhotoAlbumUITests: XCTestCase {
         XCTAssertTrue(headline.label.contains("연도·여행·장면"), headline.label)
         app.buttons["닫기"].tap()
     }
+    }
+
+    /// 앨범 메뉴의 "표지 바꾸기"로 표지를 고르고, 첫 사진으로 되돌린다.
+    func testCoverCanBeChosenAndReset() {
+        openFrontAlbum()
+        app.buttons["더 보기"].tap()
+        let change = app.buttons["표지 바꾸기…"]
+        XCTAssertTrue(change.waitForExistence(timeout: 5))
+        change.tap()
+
+        let first = app.buttons["표지 사진 1"]
+        let second = app.buttons["표지 사진 2"]
+        XCTAssertTrue(second.waitForExistence(timeout: 5))
+        XCTAssertTrue(first.isSelected, "처음에는 첫 사진이 표지다")
+        XCTAssertFalse(app.buttons["cover-reset"].exists, "직접 고른 표지가 없으면 되돌리기도 없다")
+        shot("18-cover-picker")
+        second.tap()
+
+        // 고르면 닫힌다. 다시 열면 두 번째 사진이 표지로 표시된다.
+        XCTAssertTrue(app.navigationBars["제주 가족여행"].waitForExistence(timeout: 5))
+        app.buttons["더 보기"].tap()
+        app.buttons["표지 바꾸기…"].tap()
+        XCTAssertTrue(app.buttons["표지 사진 2"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["표지 사진 2"].isSelected)
+        XCTAssertFalse(app.buttons["표지 사진 1"].isSelected)
+
+        // 되돌리기: 다시 첫 사진이 표지가 된다(예시 데이터도 원래대로).
+        app.buttons["cover-reset"].tap()
+        XCTAssertTrue(app.navigationBars["제주 가족여행"].waitForExistence(timeout: 5))
+        app.buttons["더 보기"].tap()
+        app.buttons["표지 바꾸기…"].tap()
+        XCTAssertTrue(app.buttons["표지 사진 1"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["표지 사진 1"].isSelected)
+        XCTAssertFalse(app.buttons["cover-reset"].exists)
+        app.buttons["닫기"].tap()
+    }
+
+    /// 결제 화면의 버튼은 모두 같은 높이여야 한다(가격을 불러온 때와 못 불러온 때 모두).
+    func testPaywallButtonsShareOneHeight() {
+        for unavailable in [false, true] {
+            relaunch(["-forcePro", "NO"] + (unavailable ? ["-storeUnavailable", "YES"] : []))
+            app.tabBars.firstMatch.buttons["홈"].tap()
+            app.buttons["pro-button"].tap()
+            let primary = app.buttons[unavailable ? "paywall-reload" : "paywall-buy"]
+            let restore = app.buttons["paywall-restore"]
+            XCTAssertTrue(primary.waitForExistence(timeout: 5))
+            XCTAssertTrue(restore.exists)
+            print("PAYWALL heights:", primary.frame.height, restore.frame.height, "widths:", primary.frame.width, restore.frame.width)
+            XCTAssertEqual(primary.frame.height, restore.frame.height, accuracy: 0.5)
+            XCTAssertEqual(primary.frame.width, restore.frame.width, accuracy: 0.5)
+            XCTAssertGreaterThanOrEqual(restore.frame.height, 44, "누르기 쉬운 크기(44pt 이상)")
+            shot(unavailable ? "17-paywall-unavailable" : "16-paywall-buttons")
+            app.buttons["닫기"].tap()
+        }
+    }
 }
 

@@ -7,7 +7,8 @@ final class PhotoAlbumUITests: XCTestCase {
 
     override func setUp() {
         continueAfterFailure = false
-        app.launchArguments = ["-seedDemo"]
+        // 실기기용으로 기억해 둔 Pro 강제 값이 테스트 사이에 남지 않게 지우고 시작한다.
+        app.launchArguments = ["-seedDemo", "-forcePro", "CLEAR"]
         app.launch()
         allowPhotosIfAsked()
         // 앱은 홈에서 시작한다. 대부분의 테스트는 보관함에서 출발한다.
@@ -296,19 +297,38 @@ final class PhotoAlbumUITests: XCTestCase {
         return created
     }
 
+    private func albumCard(_ name: String) -> XCUIElement {
+        app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "\(name), 사진")).firstMatch
+    }
+
     /// 테스트가 만든 앨범을 지워 예시 데이터를 원래대로 돌려놓는다. 새 앨범은 늘 맨 앞에 온다.
+    /// 지우지 못하면 실패한다. 남은 앨범이 다음 테스트를 망가뜨리기 때문이다.
     private func deleteAlbums(_ names: [String]) {
         for name in names.reversed() {
-            let card = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", name)).firstMatch
-            guard card.waitForExistence(timeout: 5) else { continue }
+            // 앨범 카드의 라벨은 "이름, 사진 N장"이다. 미니 바처럼 이름으로 시작하는 다른 버튼과 헷갈리지 않게 한다.
+            let card = albumCard(name)
+            XCTAssertTrue(card.waitForExistence(timeout: 5), "지울 앨범 '\(name)'이 보여야 한다")
             card.press(forDuration: 1.0)
-            let delete = app.buttons["앨범 삭제"].firstMatch
-            XCTAssertTrue(delete.waitForExistence(timeout: 5))
-            delete.tap()
-            let confirm = app.buttons.matching(NSPredicate(format: "label == %@", "앨범 삭제")).element(boundBy: 0)
-            XCTAssertTrue(confirm.waitForExistence(timeout: 5))
-            confirm.tap()
-            sleep(1)
+            let menuItem = app.buttons["앨범 삭제"].firstMatch
+            if !menuItem.waitForExistence(timeout: 5) {
+                shot("fail-delete-menu")
+                for element in app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", name)).allElementsBoundByIndex {
+                    print("DELETE candidate:", element.label, element.frame, element.isHittable)
+                }
+            }
+            XCTAssertTrue(menuItem.exists, "길게 누르면 앨범 메뉴가 떠야 한다")
+            menuItem.tap()
+            // 메뉴 항목과 이름이 같으므로, 확인 창 안의 버튼만 찾는다.
+            let dialog = app.sheets.firstMatch.exists ? app.sheets.firstMatch : app.alerts.firstMatch
+            let confirm = dialog.buttons["앨범 삭제"]
+            if confirm.waitForExistence(timeout: 5) {
+                confirm.tap()
+            } else {
+                app.buttons.matching(NSPredicate(format: "label == %@", "앨범 삭제")).allElementsBoundByIndex.last?.tap()
+            }
+            let gone = NSPredicate(format: "exists == false")
+            expectation(for: gone, evaluatedWith: card)
+            waitForExpectations(timeout: 5)
         }
     }
 
@@ -357,6 +377,55 @@ final class PhotoAlbumUITests: XCTestCase {
         XCTAssertTrue(headline.waitForExistence(timeout: 5))
         XCTAssertTrue(headline.label.contains("몇 년 전 오늘"), headline.label)
         app.buttons["닫기"].tap()
+    }
+
+    // MARK: 자동 분류
+
+    func testProAutoClassifySuggestionCreatesAlbum() {
+        relaunch(["-forcePro", "YES", "-autoMinimum", "1"])
+        app.tabBars.firstMatch.buttons["정리"].tap()
+        // 새 앨범을 만드는 제안을 고른다(이미 있는 예시 앨범을 바꾸지 않도록).
+        let card = app.buttons.matching(identifier: "auto-suggestion")
+            .matching(NSPredicate(format: "label CONTAINS %@", "새 앨범")).firstMatch
+        let appeared = card.waitForExistence(timeout: 15)
+        if !appeared {
+            shot("fail-auto")
+            for element in app.buttons.matching(identifier: "auto-suggestion").allElementsBoundByIndex {
+                print("AUTO card:", element.label)
+            }
+            print("UI-TREE-BEGIN\n\(app.debugDescription)\nUI-TREE-END")
+        }
+        XCTAssertTrue(appeared, "Pro는 정리 탭에서 자동 분류 제안을 본다")
+        shot("19-auto-classify")
+        card.tap()
+
+        let title = app.textFields["auto-title"]
+        XCTAssertTrue(title.waitForExistence(timeout: 5))
+        let name = (title.value as? String) ?? ""
+        XCTAssertFalse(name.isEmpty)
+        let apply = app.buttons["auto-apply"]
+        XCTAssertTrue(apply.label.hasPrefix("앨범 만들기"), apply.label)
+        shot("20-auto-review")
+        apply.tap()
+
+        app.tabBars.firstMatch.buttons["보관함"].tap()
+        let created = albumCard(name)
+        XCTAssertTrue(created.waitForExistence(timeout: 5), "제안대로 새 앨범 '\(name)'이 생겨야 한다")
+        deleteAlbums([name])
+    }
+
+    func testFreeUserSeesLockedAutoClassify() {
+        relaunch(["-forcePro", "NO", "-autoMinimum", "1"])
+        app.tabBars.firstMatch.buttons["정리"].tap()
+        let locked = app.buttons["locked-auto"]
+        XCTAssertTrue(locked.waitForExistence(timeout: 15), "무료 사용자는 잠긴 자동 분류 줄을 본다")
+        XCTAssertFalse(app.buttons["auto-suggestion"].exists)
+        locked.tap()
+        let headline = app.staticTexts["paywall-headline"]
+        XCTAssertTrue(headline.waitForExistence(timeout: 5))
+        XCTAssertTrue(headline.label.contains("연도·여행·장면"), headline.label)
+        app.buttons["닫기"].tap()
+    }
     }
 
     /// 앨범 메뉴의 "표지 바꾸기"로 표지를 고르고, 첫 사진으로 되돌린다.

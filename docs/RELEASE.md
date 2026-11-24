@@ -35,12 +35,23 @@ App Store에 1.0을 올리기까지 남은 일. 끝낸 항목은 아래 "끝낸 
 
 무료와 Pro의 경계(바꾸려면 `ProStore.freeAlbumLimit`과 각 화면):
 - 무료: 앨범 5개까지(이미 더 가진 앨범은 그대로 씀), 나머지 기능 전부.
-- Pro: 앨범 무제한, 앨범 선택 시트의 "추천", 홈의 "추천 앨범"(몇 년 전 오늘, 자주 보는 인물).
+- Pro: 앨범 무제한, 앨범 선택 시트의 "추천", 홈의 "추천 앨범"(몇 년 전 오늘, 자주 보는 인물),
+  정리 탭의 "자동 분류"(연도·여행·장면. `PhotoAlbum/AutoClassify/`).
   무료 사용자에게는 추천이 실제로 있을 때만 잠긴 미리보기를 보여 준다.
 
 Xcode에서 결제를 눌러 보려면: Product → Scheme → Edit Scheme → Run → Options → StoreKit Configuration에서 `Folio.storekit`을 고른다.
 공유 스킴에는 넣지 않았다. 넣으면 `xcodebuild test`로 단위·UI 테스트를 한꺼번에 돌릴 때 Xcode의 로컬 StoreKit 서버와
 단위 테스트의 `SKTestSession`이 부딪혀 구매 테스트가 실패한다. 단위 테스트(`ProStoreTests`)는 스킴과 상관없이 이 파일로 구매·환불·복원을 확인한다.
+
+### A-3. 자동 분류 — 실기기에서 확인할 것
+
+- [ ] **장면 분류 정확도**: Vision 장면 분류는 시뮬레이터에서 돌지 않는다(`Failed to create espresso context`). 실기기에서 반려동물·음식·바다·산 제안이 맞는지 본다.
+  틀린 사진이 많으면 `SceneCategory.minimumConfidence`(지금 0.6)를 올리거나 이름 목록(`SceneCategory.identifiers`)을 줄인다.
+- [ ] **처음 분석 시간과 배터리**: 처음 한 번 보관함 전체를 분석한다(진행이 정리 탭에 "사진 살펴보는 중"으로 보임). 앱이 켜져 있는 동안만 돌고, 끊기면 다음에 이어 간다.
+  수만 장이면 오래 걸릴 수 있다. 필요하면 충전 중 백그라운드 작업(`BGProcessingTask`)으로 옮긴다.
+- [ ] **여행 기준**: 집(가장 많이 찍은 곳)에서 30km 넘게, 48시간 넘게 끊기지 않고, 12장 넘게 찍은 묶음. 실제 사진으로 보고 조정한다(`AutoClassifier.Thresholds`).
+- 개인정보: 장면 분석은 기기 안에서만 하고, 결과는 앱 지원 폴더의 `scene-index.json`에만 둔다. 개인정보 처리방침에 적는다.
+  여행 이름의 지명은 여행 가운데 좌표 한 점을 Apple 지도 서비스로 보내 받는다(사진 지명과 같은 방식).
 
 ### B. 출시 전 보강
 

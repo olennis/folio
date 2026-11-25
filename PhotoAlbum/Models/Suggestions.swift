@@ -83,7 +83,7 @@ enum Suggestions {
         clues.spots.contains { abs($0.latitude - latitude) < nearby && abs($0.longitude - longitude) < nearby }
     }
 
-    /// 겹치는 단서가 많은 앨범부터. 같으면 보관함 순서대로.
+    /// 겹치는 단서가 많은 앨범부터. 같으면 보관함 순서대로. 비밀 앨범은 추천하지 않는다.
     static func rank(
         _ albums: [Album],
         sameDay: Set<UUID>,
@@ -93,7 +93,7 @@ enum Suggestions {
         limit: Int
     ) -> [AlbumSuggestion] {
         var scored: [(suggestion: AlbumSuggestion, score: Int, order: Int)] = []
-        for (order, album) in albums.enumerated() where !excluding.contains(album.id) {
+        for (order, album) in albums.enumerated() where !excluding.contains(album.id) && !album.isLocked {
             let day = sameDay.contains(album.id)
             let place = samePlace.contains(album.id)
             let year = album.kind == .year && Album.year(in: album.title).map(years.contains) == true

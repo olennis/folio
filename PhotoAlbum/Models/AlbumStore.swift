@@ -46,6 +46,12 @@ struct AlbumStore {
         save()
     }
 
+    /// 앨범을 잠그거나 푼다. 잠글 수 있는지(Pro, 기기 암호)는 화면에서 먼저 확인한다.
+    func setLocked(_ album: Album, _ locked: Bool) {
+        album.isLocked = locked
+        save()
+    }
+
     /// 앨범을 열었다고 기록한다.
     func markOpened(_ album: Album, at date: Date = .now) {
         album.lastOpenedAt = date

@@ -237,7 +237,10 @@ struct AlbumRow: View {
     var body: some View {
         HStack(spacing: 12) {
             Group {
-                if let id = album.coverIdentifier {
+                if album.isLocked {
+                    Color(.tertiarySystemFill)
+                        .overlay { Image(systemName: "lock.fill").foregroundStyle(.secondary) }
+                } else if let id = album.coverIdentifier {
                     AssetImage(id: id, pixels: 200)
                 } else {
                     Color(.tertiarySystemFill)

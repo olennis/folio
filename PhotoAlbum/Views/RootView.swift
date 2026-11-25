@@ -9,13 +9,15 @@ enum AppTab: Hashable {
 struct RootView: View {
     @Query private var albums: [Album]
     @ObservedObject private var session = ViewingSession.shared
+    @Environment(\.scenePhase) private var scenePhase
     @State private var tab = AppTab.home
     @State private var resuming: ResumeTarget?
 
     /// 미니 바가 돌아갈 자리. 앨범이 지워졌거나 사진이 빠졌으면 없다.
     private var target: ResumeTarget? {
         guard let albumID = session.albumID, let assetIdentifier = session.assetIdentifier,
-              let album = albums.first(where: { $0.id == albumID }),
+              // 비밀 앨범의 사진은 미니 바에 띄우지 않는다.
+              let album = albums.first(where: { $0.id == albumID }), !album.isLocked,
               let link = album.orderedLinks.first(where: { $0.photo?.assetIdentifier == assetIdentifier }),
               let photo = link.photo
         else { return nil }
@@ -25,6 +27,10 @@ struct RootView: View {
     var body: some View {
         tabs
             .fullScreenCover(item: $resuming) { ViewerHost(album: $0.album, startID: $0.linkID) }
+            // 앱을 떠나면 열어 둔 비밀 앨범을 모두 다시 잠근다.
+            .onChange(of: scenePhase) { _, phase in
+                if phase == .background { SecretLock.shared.lockAll() }
+            }
     }
 
     @ViewBuilder

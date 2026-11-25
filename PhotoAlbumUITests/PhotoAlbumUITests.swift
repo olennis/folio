@@ -349,6 +349,51 @@ final class PhotoAlbumUITests: XCTestCase {
         deleteAlbums(created)
     }
 
+    // MARK: 비밀 앨범
+
+    /// 카드를 길게 눌러 메뉴 항목을 누른다.
+    private func cardMenu(_ card: XCUIElement, _ item: String) {
+        card.press(forDuration: 1.0)
+        let button = app.buttons[item]
+        XCTAssertTrue(button.waitForExistence(timeout: 5), "카드 메뉴에 ‘\(item)’이 있어야 한다")
+        button.tap()
+    }
+
+    func testProUserLocksAlbumThatHidesCoverAndHomeAndOpensAfterCheck() {
+        // 시뮬레이터에는 Face ID가 없어서 본인 확인은 통과한 것으로 친다.
+        relaunch(["-forcePro", "YES", "-secretAutoUnlock", "YES"])
+        cardMenu(frontCard, "앨범 잠그기")
+        let locked = app.buttons["제주 가족여행, 잠긴 앨범"]
+        XCTAssertTrue(locked.waitForExistence(timeout: 5), "잠근 카드는 사진 수 대신 잠김을 알린다")
+        shot("21-secret-card")
+
+        locked.tap()
+        XCTAssertTrue(app.navigationBars["제주 가족여행"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["album-position"].waitForExistence(timeout: 5), "확인하면 사진이 보인다")
+        app.navigationBars.buttons.firstMatch.tap()
+
+        // 방금 열었어도 홈의 최근 본 앨범에는 나오지 않는다.
+        app.tabBars.firstMatch.buttons["홈"].tap()
+        XCTAssertTrue(app.navigationBars["홈"].waitForExistence(timeout: 5))
+        sleep(1)
+        XCTAssertFalse(app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "제주 가족여행")).firstMatch.exists)
+
+        app.tabBars.firstMatch.buttons["보관함"].tap()
+        cardMenu(locked, "잠금 해제")
+        XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "제주 가족여행, 사진")).firstMatch
+            .waitForExistence(timeout: 5), "잠금을 풀면 원래 카드로 돌아온다")
+    }
+
+    func testFreeUserSeesPaywallWhenLockingAlbum() {
+        relaunch(["-forcePro", "NO", "-secretAutoUnlock", "YES"])
+        cardMenu(frontCard, "앨범 잠그기")
+        let headline = app.staticTexts["paywall-headline"]
+        XCTAssertTrue(headline.waitForExistence(timeout: 5), "무료로 잠그려 하면 결제 화면이 뜬다")
+        XCTAssertTrue(headline.label.contains("Face ID"), headline.label)
+        app.buttons["닫기"].tap()
+        XCTAssertFalse(app.buttons["제주 가족여행, 잠긴 앨범"].exists, "무료로는 잠기지 않는다")
+    }
+
     func testProUserHasNoAlbumLimit() {
         relaunch(["-forcePro", "YES"])
         let created = fillToFreeLimit()

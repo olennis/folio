@@ -70,6 +70,26 @@ final class AutoClassifierTests: XCTestCase {
         XCTAssertEqual(found.first?.center?.latitude ?? 0, jeju.0, accuracy: 0.01)
     }
 
+    /// 매일 찍는 사람: 여행 앞뒤 서울 사진이 48시간 안에 이어져도 여행은 제주 사진만, 이름은 제주로.
+    func testDailyHomePhotosAroundTripAreTrimmed() {
+        let before = (0..<12).map { photo("b\($0)", date(2024, 6, 20 + $0), at: seoul) }
+        let trip = (0..<5).map { photo("t\($0)", date(2024, 7, 3, hour: 9 + $0 * 6), at: jeju) }
+        let after = (0..<12).map { photo("a\($0)", date(2024, 7, 5 + $0), at: seoul) }
+        let found = AutoClassifier.trips(everyday(20) + before + trip + after, albums: [], thresholds: loose, calendar: calendar)
+        XCTAssertEqual(found.count, 1)
+        XCTAssertEqual(found.first?.assetIDs, trip.map(\.id))
+        XCTAssertEqual(found.first?.center?.latitude ?? 0, jeju.0, accuracy: 0.05, "서울과 제주의 평균(평택 근처)이 아니라 제주")
+    }
+
+    /// 두 곳을 다녀온 여행은 평균 지점이 아니라 더 많이 찍은 곳으로 이름을 붙인다.
+    func testTripCenterIsWhereMostPhotosWereTaken() {
+        let busan = (35.18, 129.08)
+        let trip = (0..<6).map { photo("j\($0)", date(2024, 7, 3, hour: 8 + $0), at: jeju) }
+            + (0..<3).map { photo("p\($0)", date(2024, 7, 4, hour: 8 + $0), at: busan) }
+        let found = AutoClassifier.trips(everyday(20) + trip, albums: [], thresholds: loose, calendar: calendar)
+        XCTAssertEqual(found.first?.center?.latitude ?? 0, jeju.0, accuracy: 0.05)
+    }
+
     func testLongGapSplitsTwoTrips() {
         let first = (0..<4).map { photo("x\($0)", date(2024, 3, 1, hour: 8 + $0), at: jeju) }
         let second = (0..<4).map { photo("y\($0)", date(2024, 3, 10, hour: 8 + $0), at: jeju) }

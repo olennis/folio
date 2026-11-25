@@ -174,7 +174,10 @@ enum AutoClassifier {
     ) -> [AutoSuggestion] {
         guard let home = home(of: dated) else { return [] }
         var result: [AutoSuggestion] = []
-        for run in runs(dated, gap: thresholds.tripGap) {
+        let away = runs(dated, gap: thresholds.tripGap).flatMap {
+            awayStretches($0, home: home, kilometers: thresholds.awayKilometers)
+        }
+        for run in away {
             guard run.count >= thresholds.tripMinimum,
                   let start = run.first?.takenAt, let end = run.last?.takenAt,
                   end.timeIntervalSince(start) <= thresholds.tripMaxDays * 86400
@@ -185,11 +188,8 @@ enum AutoClassifier {
             }
             // 위치가 있는 사진이 어느 정도 있어야 어디였는지 말할 수 있다.
             guard spots.count >= 3, spots.count * 2 >= run.count else { continue }
-            let center = Coordinate(
-                latitude: spots.map(\.latitude).reduce(0, +) / Double(spots.count),
-                longitude: spots.map(\.longitude).reduce(0, +) / Double(spots.count)
-            )
-            guard center.distance(to: home) > thresholds.awayKilometers else { continue }
+            // 평균 좌표는 두 곳을 다녀오면 그 사이 엉뚱한 곳이 된다. 가장 많이 찍은 곳으로 이름을 붙인다.
+            guard let center = Self.home(of: run), center.distance(to: home) > thresholds.awayKilometers else { continue }
             let ids = run.map(\.id)
             let organized = albums.contains { album in
                 Double(ids.filter(album.assetIDs.contains).count) >= Double(ids.count) * thresholds.alreadyOrganizedShare
@@ -218,6 +218,29 @@ enum AutoClassifier {
                 current = []
             }
             current.append(photo)
+        }
+        if !current.isEmpty { result.append(current) }
+        return result
+    }
+
+    /// 묶음에서 집을 떠나 있던 구간들. 매일 찍는 사람은 여행 앞뒤 일상 사진이 같은 묶음에 붙으므로 집에서 찍은 사진에서 자른다.
+    /// 위치 없는 사진은 앞뒤가 모두 먼 곳일 때만 넣는다.
+    static func awayStretches(_ run: [LibraryPhoto], home: Coordinate, kilometers: Double) -> [[LibraryPhoto]] {
+        var result: [[LibraryPhoto]] = []
+        var current: [LibraryPhoto] = []
+        var unlocated: [LibraryPhoto] = []
+        for photo in run {
+            guard let latitude = photo.latitude, let longitude = photo.longitude else {
+                if !current.isEmpty { unlocated.append(photo) }
+                continue
+            }
+            if Coordinate(latitude: latitude, longitude: longitude).distance(to: home) > kilometers {
+                current += unlocated + [photo]
+            } else if !current.isEmpty {
+                result.append(current)
+                current = []
+            }
+            unlocated = []
         }
         if !current.isEmpty { result.append(current) }
         return result

@@ -394,6 +394,32 @@ final class PhotoAlbumUITests: XCTestCase {
         XCTAssertFalse(app.buttons["제주 가족여행, 잠긴 앨범"].exists, "무료로는 잠기지 않는다")
     }
 
+    // MARK: 꾹 눌러 끌어 고르기
+
+    func testLongPressAndDragSelectsManyPhotosAndDragFromSelectedDeselects() {
+        // 앨범이 없는 빈 저장소로 켜서 보관함의 사진이 모두 정리 탭에 나오게 한다.
+        app.terminate()
+        app.launchArguments = ["-inMemoryStore", "YES"]
+        app.launch()
+        app.tabBars.firstMatch.buttons["정리"].tap()
+        let cells = app.buttons.matching(identifier: "unsorted-photo")
+        XCTAssertTrue(cells.firstMatch.waitForExistence(timeout: 15))
+        XCTAssertGreaterThanOrEqual(cells.count, 6, "시뮬레이터 보관함에 사진이 6장 이상 있어야 한다")
+
+        // 첫 칸을 꾹 누른 채 둘째 줄 둘째 칸(다섯째)까지 끈다.
+        cells.element(boundBy: 0).press(forDuration: 0.6, thenDragTo: cells.element(boundBy: 4))
+        XCTAssertTrue(app.navigationBars["5장 선택됨"].waitForExistence(timeout: 5), "지나간 다섯 장이 골라져야 한다")
+        shot("22-drag-select")
+
+        // 골라 둔 둘째 칸에서 시작해 셋째 칸까지 끌면 그 두 장이 풀린다.
+        cells.element(boundBy: 1).press(forDuration: 0.6, thenDragTo: cells.element(boundBy: 2))
+        XCTAssertTrue(app.navigationBars["3장 선택됨"].waitForExistence(timeout: 5), "고른 칸에서 시작하면 푼다")
+
+        // 짧게 누르면 예전처럼 한 장만 바뀐다.
+        cells.element(boundBy: 5).tap()
+        XCTAssertTrue(app.navigationBars["4장 선택됨"].waitForExistence(timeout: 5))
+    }
+
     func testProUserHasNoAlbumLimit() {
         relaunch(["-forcePro", "YES"])
         let created = fillToFreeLimit()

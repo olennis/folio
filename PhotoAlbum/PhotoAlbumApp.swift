@@ -6,9 +6,17 @@ import SwiftUI
 struct PhotoAlbumApp: App {
     /// 저장소를 열지 못해도 앱을 끝내지 않는다. 데이터는 건드리지 않고 안내만 보여 준다.
     private let store: Result<ModelContainer, Error> = Result {
-        try ModelContainer(
+        var configuration = ModelConfiguration()
+        #if DEBUG
+        // UI 테스트용(`-inMemoryStore YES`): 앨범이 하나도 없는 빈 저장소로 켠다. 기기의 앨범은 건드리지 않는다.
+        if UserDefaults.standard.bool(forKey: "inMemoryStore") {
+            configuration = ModelConfiguration(isStoredInMemoryOnly: true)
+        }
+        #endif
+        return try ModelContainer(
             for: Schema(versionedSchema: FolioSchemaV1.self),
-            migrationPlan: FolioMigrationPlan.self
+            migrationPlan: FolioMigrationPlan.self,
+            configurations: configuration
         )
     }
 

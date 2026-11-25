@@ -15,7 +15,7 @@ struct HomeView: View {
 
     /// 앨범이 늘거나 줄거나 사진이 바뀌면 달라지는 값. 이때만 다시 구한다.
     private var albumsKey: [Int] {
-        albums.map(\.revision) + [albums.count]
+        albums.map(\.revision) + [albums.count, albums.filter(\.isLocked).count]
     }
 
     var body: some View {
@@ -73,7 +73,7 @@ struct HomeView: View {
         var used: Set<UUID> = []
         var result: [Feature] = []
         for memory in memories {
-            guard let album = albums.first(where: { $0.id == memory.albumID }) else { continue }
+            guard let album = albums.first(where: { $0.id == memory.albumID }), !album.isLocked else { continue }
             used.insert(album.id)
             result.append(Feature(
                 headline: memory.headline,

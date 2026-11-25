@@ -72,7 +72,7 @@ enum BackgroundQueries {
             })
             for photo in (try? context.fetch(descriptor)) ?? [] { samePlace.formUnion(albumIDs(of: photo)) }
         }
-        let albums = (try? context.fetch(sortedAlbums)) ?? []
+        let albums = openAlbums(context)
         return Suggestions.rank(albums, sameDay: sameDay, samePlace: samePlace, years: clues.years, excluding: excluding, limit: 3)
             .map { SuggestionResult(albumID: $0.album.id, reason: $0.reason) }
     }
@@ -82,7 +82,7 @@ enum BackgroundQueries {
         oldest.fetchLimit = 1
         guard let earliest = (try? context.fetch(oldest))?.first?.takenAt else { return [] }
         let windows = HomeFeed.windows(today: today, firstYear: calendar.component(.year, from: earliest), calendar: calendar)
-        let albums = (try? context.fetch(sortedAlbums)) ?? []
+        let albums = openAlbums(context)
         var order: [UUID: Int] = [:]
         for (index, album) in albums.enumerated() { order[album.id] = index }
 
@@ -108,7 +108,12 @@ enum BackgroundQueries {
         photo.links.compactMap { $0.isDeleted ? nil : $0.album?.id }
     }
 
-    private static var sortedAlbums: FetchDescriptor<Album> {
-        FetchDescriptor<Album>(sortBy: [SortDescriptor(\.sortIndex), SortDescriptor(\.createdAt, order: .reverse)])
+    /// 추천과 지난 오늘에 꺼내도 되는 앨범. 비밀 앨범은 뺀다.
+    private static func openAlbums(_ context: ModelContext) -> [Album] {
+        let descriptor = FetchDescriptor<Album>(
+            predicate: #Predicate { !$0.isLocked },
+            sortBy: [SortDescriptor(\.sortIndex), SortDescriptor(\.createdAt, order: .reverse)]
+        )
+        return (try? context.fetch(descriptor)) ?? []
     }
 }

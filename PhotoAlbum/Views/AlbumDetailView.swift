@@ -32,6 +32,9 @@ struct AlbumDetailView: View {
     @State private var linkCache = OrderedLinksCache()
     @State private var titling: Photo?
     @State private var draftPhotoTitle = ""
+    @ObservedObject private var lock = SecretLock.shared
+    @State private var paywall: ProPaywall.Reason?
+    @State private var notice: String?
 
     private var store: AlbumStore { AlbumStore(context: context) }
     private var settle: Animation { reduceMotion ? Motion.reduced : Motion.settle }
@@ -40,8 +43,10 @@ struct AlbumDetailView: View {
         // 삭제된 앨범의 속성을 읽지 않도록 막는다(삭제 후 뒤로 가는 동안 잠깐 그려질 수 있다).
         if album.isDeleted || album.modelContext == nil {
             Color.clear
+        } else if !lock.isOpen(album) {
+            SecretGate(album: album)
         } else {
-            content
+            content.secretShield(album)
         }
     }
 
@@ -92,6 +97,10 @@ struct AlbumDetailView: View {
                         Button("표지 바꾸기…", systemImage: "photo.badge.checkmark") { choosingCover = true }
                             .disabled(links.isEmpty)
                         KindPicker(album: album)
+                        SecretLockButton(
+                            album: album, keepsOpen: true,
+                            needPro: { paywall = .secretAlbum }, notice: { notice = $0 }
+                        )
                         Button("앨범 삭제", systemImage: "trash", role: .destructive) { confirmDelete = true }
                     }
                 } label: {
@@ -104,6 +113,17 @@ struct AlbumDetailView: View {
         .fullScreenCover(isPresented: $showViewer) {
             PhotoViewerView(album: album, currentID: $currentID, removed: removed, onRemove: remove, onUndo: undo)
                 .zoomDestination(id: currentID, in: zoom)
+                .secretShield(album)
+        }
+        // 앱을 떠났다 오면 잠긴 앨범은 다시 닫힌다. 크게 보던 사진도 같이 닫는다.
+        .onChange(of: lock.isOpen(album)) { _, isOpen in
+            if !isOpen { showViewer = false }
+        }
+        .sheet(item: $paywall) { ProPaywall(reason: $0) }
+        .alert("앨범 잠그기", isPresented: Binding(get: { notice != nil }, set: { if !$0 { notice = nil } })) {
+            Button("확인", role: .cancel) {}
+        } message: {
+            Text(notice ?? "")
         }
         .sheet(item: $editingAlbumsOf) { AlbumPickerSheet(photo: $0) }
         .sheet(isPresented: $choosingCover) { CoverPickerSheet(album: album) }

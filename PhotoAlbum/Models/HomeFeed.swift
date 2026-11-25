@@ -58,7 +58,7 @@ enum HomeFeed {
         limit: Int = 3
     ) -> [Memory] {
         var byAsset: [String: (takenAt: Date, orders: [Int])] = [:]
-        for (order, album) in albums.enumerated() {
+        for (order, album) in albums.enumerated() where !album.isLocked {
             for link in album.links where !link.isDeleted {
                 guard let photo = link.photo, let takenAt = photo.takenAt else { continue }
                 byAsset[photo.assetIdentifier, default: (takenAt, [])].orders.append(order)
@@ -130,18 +130,18 @@ enum HomeFeed {
         return low < ranges.count && ranges[low].contains(date) ? low : nil
     }
 
-    /// 자주 여는 인물 앨범. 한 번도 열지 않은 앨범은 빼고 많이 연 순서로.
+    /// 자주 여는 인물 앨범. 한 번도 열지 않은 앨범과 비밀 앨범은 빼고 많이 연 순서로.
     static func frequentPeople(in albums: [Album], limit: Int = 3) -> [Album] {
         Array(albums
-            .filter { $0.kind == .person && $0.openCount > 0 }
+            .filter { $0.kind == .person && $0.openCount > 0 && !$0.isLocked }
             .sorted { ($0.openCount, $0.lastOpenedAt ?? .distantPast) > ($1.openCount, $1.lastOpenedAt ?? .distantPast) }
             .prefix(limit))
     }
 
-    /// 최근에 연 앨범. 방금 연 것이 먼저.
+    /// 최근에 연 앨범. 방금 연 것이 먼저. 비밀 앨범은 빼고.
     static func recent(in albums: [Album], limit: Int = 8) -> [Album] {
         Array(albums
-            .filter { $0.lastOpenedAt != nil }
+            .filter { $0.lastOpenedAt != nil && !$0.isLocked }
             .sorted { ($0.lastOpenedAt ?? .distantPast) > ($1.lastOpenedAt ?? .distantPast) }
             .prefix(limit))
     }

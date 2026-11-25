@@ -37,6 +37,9 @@ App Store에 1.0을 올리기까지 남은 일. 끝낸 항목은 아래 "끝낸 
 - 무료: 앨범 5개까지(이미 더 가진 앨범은 그대로 씀), 나머지 기능 전부.
 - Pro: 앨범 무제한, 앨범 선택 시트의 "추천", 홈의 "추천 앨범"(몇 년 전 오늘, 자주 보는 인물),
   정리 탭의 "자동 분류"(연도·여행·장면. `PhotoAlbum/AutoClassify/`).
+  비밀 앨범(앨범 메뉴의 "앨범 잠그기". `PhotoAlbum/Models/SecretLock.swift`): 열 때 Face ID(안 되면 기기 암호)를 묻고,
+  앱을 떠나면 다시 잠긴다. 잠긴 앨범은 표지를 가리고 홈·추천·미니 바에 나오지 않는다.
+  Pro가 사라져도 이미 잠근 앨범은 잠긴 채로 두고, 열거나 풀 수는 있다. 기기 암호가 없으면 갇히지 않게 그냥 연다.
   무료 사용자에게는 추천이 실제로 있을 때만 잠긴 미리보기를 보여 준다.
 
 Xcode에서 결제를 눌러 보려면: Product → Scheme → Edit Scheme → Run → Options → StoreKit Configuration에서 `Folio.storekit`을 고른다.

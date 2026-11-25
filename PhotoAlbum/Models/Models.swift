@@ -86,6 +86,8 @@ final class Album {
     var cachedPlace: String?
     /// 사진 구성이나 순서가 바뀔 때마다 하나씩 오른다. 화면은 이 값이 바뀔 때만 목록을 다시 정렬한다.
     var revision: Int = 0
+    /// 비밀 앨범. 열 때 Face ID를 묻고, 홈·추천·미니 바에 나오지 않는다(`SecretLock`).
+    var isLocked: Bool = false
 
     @Relationship(deleteRule: .cascade, inverse: \AlbumPhoto.album)
     var links: [AlbumPhoto] = []

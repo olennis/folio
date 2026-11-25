@@ -30,6 +30,7 @@ struct LibraryView: View {
     @State private var deleting: Album?
     @State private var choosingCover: Album?
     @State private var draftTitle = ""
+    @State private var notice: String?
 
     private var store: AlbumStore { AlbumStore(context: context) }
 
@@ -90,6 +91,11 @@ struct LibraryView: View {
             }
             .sheet(item: $paywall) { ProPaywall(reason: $0) }
             .sheet(item: $choosingCover) { CoverPickerSheet(album: $0) }
+            .alert("앨범 잠그기", isPresented: isPresenting($notice)) {
+                Button("확인", role: .cancel) {}
+            } message: {
+                Text(notice ?? "")
+            }
             .alert("새로운 앨범", isPresented: $showCreate) {
                 TextField("앨범 이름", text: $draftTitle)
                 Button("취소", role: .cancel) {}
@@ -163,7 +169,9 @@ struct LibraryView: View {
                 // 더미에서 빠지고 들어올 때 같은 길로 오간다.
                 .transition(.opacity.combined(with: .offset(y: 120)))
                 .contextMenu { cardMenu(item.album) }
-                .accessibilityLabel(Text(verbatim: "\(item.album.title), 사진 \(item.album.photoCount)장"))
+                .accessibilityLabel(Text(verbatim: item.album.isLocked
+                    ? "\(item.album.title), 잠긴 앨범"
+                    : "\(item.album.title), 사진 \(item.album.photoCount)장"))
                 .accessibilityAction(named: "다음 앨범") { front = (current + 1) % count }
                 .accessibilityAction(named: "이전 앨범") { front = (current - 1 + count) % count }
             }
@@ -241,8 +249,9 @@ struct LibraryView: View {
             renaming = album
         }
         Button("표지 바꾸기…", systemImage: "photo.badge.checkmark") { choosingCover = album }
-            .disabled(album.photoCount == 0)
+            .disabled(album.photoCount == 0 || album.isLocked)
         KindPicker(album: album)
+        SecretLockButton(album: album, needPro: { paywall = .secretAlbum }, notice: { notice = $0 })
         Button("앨범 삭제", systemImage: "trash", role: .destructive) { deleting = album }
     }
 
@@ -320,7 +329,15 @@ struct AlbumCard: View {
 
     @ViewBuilder
     private var cover: some View {
-        if let id = album.coverIdentifier {
+        if album.isLocked {
+            // 잠긴 앨범은 표지 사진도 보이지 않는다.
+            LinearGradient(colors: [Color(.systemGray2), Color(.systemGray)], startPoint: .top, endPoint: .bottom)
+                .overlay {
+                    Image(systemName: "lock.fill")
+                        .font(.system(size: 44))
+                        .foregroundStyle(.white.opacity(0.8 * frontness))
+                }
+        } else if let id = album.coverIdentifier {
             AssetImage(id: id, pixels: 1200)
         } else {
             Color(.systemGray)

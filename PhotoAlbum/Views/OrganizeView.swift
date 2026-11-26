@@ -2,7 +2,8 @@ import Photos
 import SwiftData
 import SwiftUI
 
-/// 정리: 아직 어느 앨범에도 없는 사진만 모아 보여 주고, 골라서 앨범에 넣는다.
+/// 정리: 아직 어느 앨범에도 없는 사진을 모아 보여 주고, 골라서 앨범에 넣는다.
+/// "모든 사진"으로 바꾸면 이미 앨범에 든 사진도 보여서 한 사진을 여러 앨범(2024년, 제주 여행)에 넣을 수 있다.
 struct OrganizeView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Query private var photos: [Photo]
@@ -11,7 +12,10 @@ struct OrganizeView: View {
 
     @Environment(\.modelContext) private var context
     /// 미정리 사진. 보관함 전체를 훑어야 해서 백그라운드에서 구한다.
-    @State private var unsortedIDs: [String] = []
+    @State private var libraryIDs: [String] = []
+    /// 이미 앨범에 들어 있는 사진.
+    @State private var sortedIDs: Set<String> = []
+    @AppStorage("organizeShowsAll") private var showsAll = false
     @State private var reloadToken = 0
     @State private var loaded = false
     @State private var selected: Set<String> = []
@@ -19,7 +23,7 @@ struct OrganizeView: View {
     @State private var addedCount = 0
 
     // 꾹 눌러 끌어 고르기. 손가락이 있는 곳은 화면 전체 좌표로 받고, 격자 위치를 빼서 칸을 찾는다.
-    @GestureState private var isPressing = false
+    @State private var isPressing = false
     @State private var drag: GridSelection.Drag?
     @State private var dragLocation: CGPoint?
     @State private var gridFrame = CGRect.zero
@@ -40,7 +44,7 @@ struct OrganizeView: View {
     }
 
     var body: some View {
-        let items = unsortedIDs
+        let items = showsAll ? libraryIDs : libraryIDs.filter { !sortedIDs.contains($0) }
         NavigationStack {
             Group {
                 if access.status == .denied || access.status == .restricted {
@@ -60,10 +64,15 @@ struct OrganizeView: View {
                 } else if items.isEmpty {
                     ScrollView {
                         AutoClassifySection()
-                        ContentUnavailableView {
-                            Label("모두 정리했습니다", systemImage: "checkmark.circle")
-                        } description: {
-                            Text("사진 보관함의 모든 사진이 앨범에 들어 있습니다.")
+                        scopePicker
+                        if showsAll {
+                            ContentUnavailableView("사진이 없습니다", systemImage: "photo")
+                        } else {
+                            ContentUnavailableView {
+                                Label("모두 정리했습니다", systemImage: "checkmark.circle")
+                            } description: {
+                                Text("사진 보관함의 모든 사진이 앨범에 들어 있습니다. 다른 앨범에도 넣으려면 ‘모든 사진’을 보세요.")
+                            }
                         }
                     }
                 } else {
@@ -115,6 +124,8 @@ struct OrganizeView: View {
                 refreshAuto()
             }
             .onChange(of: pro.isPro) { _, _ in refreshAuto() }
+            // 보이지 않게 된 사진이 선택에 남아 같이 들어가지 않게 한다.
+            .onChange(of: showsAll) { _, _ in selected.formIntersection(items) }
             // 다른 앱에서 사진이 늘었을 수 있으니 탭에 들어올 때마다 다시 본다.
             .onAppear { if loaded { reloadToken += 1 } }
         }
@@ -126,11 +137,7 @@ struct OrganizeView: View {
                 gridContent(items, proxy: proxy)
             }
             // 끌어서 고르는 동안에는 손가락이 화면을 밀지 않는다. 끝으로 가면 대신 저절로 넘긴다.
-            .scrollDisabled(isPressing)
             .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { viewport = $0 }
-            .onChange(of: isPressing) { _, pressing in
-                if !pressing { endDrag() }
-            }
             .sensoryFeedback(.selection, trigger: dragTicks)
         }
     }
@@ -139,7 +146,10 @@ struct OrganizeView: View {
         // 스크롤 뷰가 원래 내용을 쌓던 기본 간격 그대로.
         VStack {
             AutoClassifySection()
-            Text("미정리 사진 \(items.count.formatted())장 · 아직 어느 앨범에도 없는 사진")
+            scopePicker
+            Text(showsAll
+                 ? "사진 \(items.count.formatted())장 · 앨범에 든 사진도 다른 앨범에 넣을 수 있어요"
+                 : "미정리 사진 \(items.count.formatted())장 · 아직 어느 앨범에도 없는 사진")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -155,7 +165,18 @@ struct OrganizeView: View {
                 }
             }
             .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { gridFrame = $0 }
-            .simultaneousGesture(dragSelect(items, proxy: proxy))
+            .background {
+                ScrollLongPress(
+                    shouldBegin: { gridFrame.contains($0) },
+                    onChange: { location in
+                        isPressing = true
+                        dragLocation = location
+                        extend(items)
+                        followEdge(items, proxy: proxy)
+                    },
+                    onEnd: endDrag
+                )
+            }
             .accessibilityIdentifier("unsorted-grid")
             .animation(reduceMotion ? Motion.reduced : Motion.settle, value: items)
         }
@@ -165,21 +186,6 @@ struct OrganizeView: View {
 
     private var layout: GridSelection.Layout {
         GridSelection.Layout(columns: Self.gridColumns, spacing: Self.gridSpacing, width: gridFrame.width)
-    }
-
-    /// 사진 앱처럼 꾹 누른 뒤 끌면 지나간 칸까지 고른다. 바로 끌면 그냥 스크롤이다.
-    private func dragSelect(_ items: [String], proxy: ScrollViewProxy) -> some Gesture {
-        LongPressGesture(minimumDuration: 0.3)
-            .sequenced(before: DragGesture(minimumDistance: 0, coordinateSpace: .global))
-            .updating($isPressing) { value, state, _ in
-                if case .second(true, _) = value { state = true }
-            }
-            .onChanged { value in
-                guard case .second(true, let moved) = value, let moved else { return }
-                dragLocation = moved.location
-                extend(items)
-                followEdge(items, proxy: proxy)
-            }
     }
 
     /// 손가락이 있는 칸까지 선택을 넓히거나 줄인다.
@@ -224,6 +230,7 @@ struct OrganizeView: View {
     }
 
     private func endDrag() {
+        isPressing = false
         autoScroll?.cancel()
         autoScroll = nil
         autoScrollDirection = 0
@@ -232,7 +239,19 @@ struct OrganizeView: View {
         dragLocation = nil
     }
 
+    private var scopePicker: some View {
+        Picker("보기", selection: $showsAll) {
+            Text("미정리").tag(false)
+            Text("모든 사진").tag(true)
+        }
+        .pickerStyle(.segmented)
+        .padding(.horizontal, 20)
+        .padding(.bottom, 4)
+        .accessibilityIdentifier("organize-scope")
+    }
+
     private func cell(_ id: String, isOn: Bool) -> some View {
+        let inAlbum = sortedIDs.contains(id)
         let traits: AccessibilityTraits = isOn ? .isSelected : []
         return Button {
             guard Date.now >= ignoreTapsUntil else { return }
@@ -241,6 +260,16 @@ struct OrganizeView: View {
             AssetImage(id: id, pixels: 320)
                 .aspectRatio(1, contentMode: .fit)
                 .overlay { if isOn { Color.white.opacity(0.28) } }
+                .overlay(alignment: .topLeading) {
+                    // 모든 사진에서 이미 앨범에 든 사진을 구분한다.
+                    if showsAll, inAlbum {
+                        Image(systemName: "rectangle.stack.fill")
+                            .font(.caption)
+                            .foregroundStyle(.white)
+                            .shadow(color: .black.opacity(0.45), radius: 2)
+                            .padding(6)
+                    }
+                }
                 .overlay(alignment: .bottomTrailing) {
                     Image(systemName: isOn ? "checkmark.circle.fill" : "circle")
                         .font(.title3)
@@ -251,7 +280,7 @@ struct OrganizeView: View {
                 }
         }
         .buttonStyle(PressableStyle(scale: 0.96))
-        .accessibilityLabel(Text("미정리 사진"))
+        .accessibilityLabel(Text(inAlbum ? "앨범에 든 사진" : "미정리 사진"))
         .accessibilityIdentifier("unsorted-photo")
         .accessibilityAddTraits(traits)
     }
@@ -270,7 +299,7 @@ struct OrganizeView: View {
             return
         }
         let container = context.container
-        let ids = await Task.detached(priority: .userInitiated) { () -> [String] in
+        let (library, used) = await Task.detached(priority: .userInitiated) { () -> ([String], Set<String>) in
             let options = PHFetchOptions()
             options.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
             var library: [String] = []
@@ -280,11 +309,12 @@ struct OrganizeView: View {
             var descriptor = FetchDescriptor<Photo>()
             descriptor.propertiesToFetch = [\.assetIdentifier]
             let used = Set(((try? ModelContext(container).fetch(descriptor)) ?? []).map(\.assetIdentifier))
-            return library.filter { !used.contains($0) }
+            return (library, used)
         }.value
         guard !Task.isCancelled else { return }
-        unsortedIDs = ids
-        selected.formIntersection(ids)
+        libraryIDs = library
+        sortedIDs = used
+        selected.formIntersection(showsAll ? library : library.filter { !used.contains($0) })
         loaded = true
     }
 }

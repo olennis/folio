@@ -21,28 +21,56 @@ final class PhotoAccess: ObservableObject {
 
 enum PhotoLibrary {
     static let images = PHCachingImageManager()
+    /// 식별자로 사진을 찾는 건 보관함 조회라 느리다. 스크롤하며 같은 사진을 다시 그릴 때 쓴다.
+    private static let assets = NSCache<NSString, PHAsset>()
+    /// 격자 썸네일. 스크롤해 되돌아왔을 때 빈칸 없이 바로 그린다.
+    private static let thumbnails: NSCache<NSString, UIImage> = {
+        let cache = NSCache<NSString, UIImage>()
+        cache.countLimit = 600
+        return cache
+    }()
+    /// 이보다 작은 이미지만 썸네일로 기억한다. 크게 보는 사진은 메모리를 많이 써서 두지 않는다.
+    private static let thumbnailPixels: CGFloat = 600
 
     static func asset(_ identifier: String) -> PHAsset? {
         guard !identifier.isEmpty else { return nil }
-        return PHAsset.fetchAssets(withLocalIdentifiers: [identifier], options: nil).firstObject
+        if let cached = assets.object(forKey: identifier as NSString) { return cached }
+        let asset = PHAsset.fetchAssets(withLocalIdentifiers: [identifier], options: nil).firstObject
+        if let asset { assets.setObject(asset, forKey: identifier as NSString) }
+        return asset
     }
 
-    /// 사진을 불러온다. 사진이 보관함에 없으면 false. 빠른 저화질 뒤에 고화질이 한 번 더 올 수 있다.
+    private static func thumbnailKey(_ id: String, _ pixels: CGFloat, _ fill: Bool) -> NSString {
+        "\(id)#\(Int(pixels))#\(fill)" as NSString
+    }
+
+    /// 전에 불러 둔 썸네일.
+    static func cachedThumbnail(id: String, pixels: CGFloat, fill: Bool) -> UIImage? {
+        guard pixels <= thumbnailPixels else { return nil }
+        return thumbnails.object(forKey: thumbnailKey(id, pixels, fill))
+    }
+
+    /// 사진을 불러온다. 사진이 보관함에 없으면 nil. 빠른 저화질 뒤에 고화질이 한 번 더 올 수 있다.
+    /// 돌려받은 요청 번호로 화면에서 사라진 칸의 요청을 취소할 수 있다.
     @discardableResult
-    static func load(id: String, pixels: CGFloat, fill: Bool, completion: @escaping (UIImage) -> Void) -> Bool {
-        guard let asset = asset(id) else { return false }
+    static func load(id: String, pixels: CGFloat, fill: Bool, completion: @escaping (UIImage) -> Void) -> PHImageRequestID? {
+        guard let asset = asset(id) else { return nil }
         let options = PHImageRequestOptions()
         options.deliveryMode = .opportunistic
         options.isNetworkAccessAllowed = true
-        images.requestImage(
+        let key = pixels <= thumbnailPixels ? thumbnailKey(id, pixels, fill) : nil
+        return images.requestImage(
             for: asset,
             targetSize: CGSize(width: pixels, height: pixels),
             contentMode: fill ? .aspectFill : .aspectFit,
             options: options
-        ) { result, _ in
-            if let result { completion(result) }
+        ) { result, info in
+            guard let result else { return }
+            if let key, (info?[PHImageResultIsDegradedKey] as? Bool) != true {
+                thumbnails.setObject(result, forKey: key)
+            }
+            completion(result)
         }
-        return true
     }
 
     static func creationDates(for identifiers: [String]) -> [String: Date] {
@@ -64,6 +92,7 @@ struct AssetImage: View {
 
     @State private var image: UIImage?
     @State private var missing = false
+    @State private var request: PHImageRequestID?
     @ObservedObject private var access = PhotoAccess.shared
 
     var body: some View {
@@ -81,11 +110,26 @@ struct AssetImage: View {
             .clipped()
             .contentShape(Rectangle())
             .task(id: "\(id)#\(access.status.rawValue)") { load() }
+            // 빨리 스크롤해 지나간 칸의 요청이 쌓여 보이는 칸을 늦추지 않게 한다.
+            .onDisappear { cancel() }
     }
 
     private func load() {
+        cancel()
+        let fill = contentMode == .fill
+        if let cached = PhotoLibrary.cachedThumbnail(id: id, pixels: pixels, fill: fill) {
+            image = cached
+            missing = false
+            return
+        }
         image = nil
-        missing = !PhotoLibrary.load(id: id, pixels: pixels, fill: contentMode == .fill) { image = $0 }
+        request = PhotoLibrary.load(id: id, pixels: pixels, fill: fill) { image = $0 }
+        missing = request == nil
+    }
+
+    private func cancel() {
+        if let request { PhotoLibrary.images.cancelImageRequest(request) }
+        request = nil
     }
 }
 

@@ -15,6 +15,8 @@ struct OrganizeView: View {
     @State private var libraryIDs: [String] = []
     /// 이미 앨범에 들어 있는 사진.
     @State private var sortedIDs: Set<String> = []
+    /// 지금 격자에 보이는 사진. 그릴 때마다 수천 장을 거르지 않게 미리 구해 둔다.
+    @State private var items: [String] = []
     @AppStorage("organizeShowsAll") private var showsAll = false
     @State private var reloadToken = 0
     @State private var loaded = false
@@ -26,8 +28,8 @@ struct OrganizeView: View {
     @State private var isPressing = false
     @State private var drag: GridSelection.Drag?
     @State private var dragLocation: CGPoint?
-    @State private var gridFrame = CGRect.zero
-    @State private var viewport = CGRect.zero
+    /// 격자와 화면의 위치. 스크롤하는 매 프레임 바뀌므로 화면을 다시 그리지 않는 상자에 둔다.
+    @State private var geometry = GridGeometry()
     @State private var autoScroll: Task<Void, Never>?
     @State private var autoScrollDirection = 0
     @State private var dragTicks = 0
@@ -44,7 +46,6 @@ struct OrganizeView: View {
     }
 
     var body: some View {
-        let items = showsAll ? libraryIDs : libraryIDs.filter { !sortedIDs.contains($0) }
         NavigationStack {
             Group {
                 if access.status == .denied || access.status == .restricted {
@@ -125,7 +126,7 @@ struct OrganizeView: View {
             }
             .onChange(of: pro.isPro) { _, _ in refreshAuto() }
             // 보이지 않게 된 사진이 선택에 남아 같이 들어가지 않게 한다.
-            .onChange(of: showsAll) { _, _ in selected.formIntersection(items) }
+            .onChange(of: showsAll) { _, _ in updateItems() }
             // 다른 앱에서 사진이 늘었을 수 있으니 탭에 들어올 때마다 다시 본다.
             .onAppear { if loaded { reloadToken += 1 } }
         }
@@ -137,7 +138,7 @@ struct OrganizeView: View {
                 gridContent(items, proxy: proxy)
             }
             // 끌어서 고르는 동안에는 손가락이 화면을 밀지 않는다. 끝으로 가면 대신 저절로 넘긴다.
-            .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { viewport = $0 }
+            .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { geometry.viewport = $0 }
             .sensoryFeedback(.selection, trigger: dragTicks)
         }
     }
@@ -164,10 +165,10 @@ struct OrganizeView: View {
                     cell(id, isOn: selected.contains(id)).id(id)
                 }
             }
-            .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { gridFrame = $0 }
+            .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { geometry.grid = $0 }
             .background {
                 ScrollLongPress(
-                    shouldBegin: { gridFrame.contains($0) },
+                    shouldBegin: { [geometry] in geometry.grid.contains($0) },
                     onChange: { location in
                         isPressing = true
                         dragLocation = location
@@ -178,20 +179,20 @@ struct OrganizeView: View {
                 )
             }
             .accessibilityIdentifier("unsorted-grid")
-            .animation(reduceMotion ? Motion.reduced : Motion.settle, value: items)
+            .animation(reduceMotion ? Motion.reduced : Motion.settle, value: items.count)
         }
     }
 
     // MARK: 꾹 눌러 끌어 고르기
 
     private var layout: GridSelection.Layout {
-        GridSelection.Layout(columns: Self.gridColumns, spacing: Self.gridSpacing, width: gridFrame.width)
+        GridSelection.Layout(columns: Self.gridColumns, spacing: Self.gridSpacing, width: geometry.grid.width)
     }
 
     /// 손가락이 있는 칸까지 선택을 넓히거나 줄인다.
     private func extend(_ items: [String]) {
         guard let location = dragLocation, !items.isEmpty else { return }
-        let point = CGPoint(x: location.x - gridFrame.minX, y: location.y - gridFrame.minY)
+        let point = CGPoint(x: location.x - geometry.grid.minX, y: location.y - geometry.grid.minY)
         guard let index = layout.index(at: point, count: items.count) else { return }
         if drag == nil { drag = GridSelection.Drag(anchor: index, items: items, selected: selected) }
         guard let drag else { return }
@@ -206,7 +207,7 @@ struct OrganizeView: View {
     private func followEdge(_ items: [String], proxy: ScrollViewProxy) {
         guard let y = dragLocation?.y else { return }
         let edge: CGFloat = 80
-        let direction = y > viewport.maxY - edge ? 1 : (y < viewport.minY + edge ? -1 : 0)
+        let direction = y > geometry.viewport.maxY - edge ? 1 : (y < geometry.viewport.minY + edge ? -1 : 0)
         guard direction != autoScrollDirection else { return }
         autoScroll?.cancel()
         autoScrollDirection = direction
@@ -217,7 +218,7 @@ struct OrganizeView: View {
         autoScroll = Task { @MainActor in
             while !Task.isCancelled, isPressing {
                 // 지금 화면 끝에 걸친 줄의 한 줄 너머를 끝에 맞춘다.
-                let edgeY = (direction > 0 ? viewport.maxY : viewport.minY) - gridFrame.minY
+                let edgeY = (direction > 0 ? geometry.viewport.maxY : geometry.viewport.minY) - geometry.grid.minY
                 let row = layout.row(at: edgeY) + direction
                 let target = min(max(row * Self.gridColumns, 0), items.count - 1)
                 withAnimation(.linear(duration: 0.15)) {
@@ -293,6 +294,13 @@ struct OrganizeView: View {
         if pro.isPro { model.startSceneAnalysis(container: context.container) }
     }
 
+    private func updateItems() {
+        let next = showsAll ? libraryIDs : libraryIDs.filter { !sortedIDs.contains($0) }
+        if next != items { items = next }
+        // 보이지 않게 된 사진이 선택에 남아 같이 들어가지 않게 한다.
+        selected.formIntersection(next)
+    }
+
     private func load() async {
         guard access.status == .authorized || access.status == .limited else {
             loaded = access.status != .notDetermined
@@ -314,9 +322,15 @@ struct OrganizeView: View {
         guard !Task.isCancelled else { return }
         libraryIDs = library
         sortedIDs = used
-        selected.formIntersection(showsAll ? library : library.filter { !used.contains($0) })
+        updateItems()
         loaded = true
     }
+}
+
+/// 격자 위치를 담아 두는 상자. 값이 바뀌어도 화면을 다시 그리지 않는다.
+private final class GridGeometry {
+    var grid = CGRect.zero
+    var viewport = CGRect.zero
 }
 
 /// 고른 사진들을 넣을 앨범을 여러 개 고른다.

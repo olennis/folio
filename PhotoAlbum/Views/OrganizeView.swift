@@ -2,28 +2,37 @@ import Photos
 import SwiftData
 import SwiftUI
 
-/// 정리: 아직 어느 앨범에도 없는 사진만 모아 보여 주고, 골라서 앨범에 넣는다.
+/// 정리: 아직 어느 앨범에도 없는 사진을 모아 보여 주고, 골라서 앨범에 넣는다.
+/// "모든 사진"으로 바꾸면 이미 앨범에 든 사진도 보여서 한 사진을 여러 앨범(2024년, 제주 여행)에 넣을 수 있다.
 struct OrganizeView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Query private var photos: [Photo]
+    /// 사진이 앨범에 들어가거나 빠질 때 다시 구하려고 지켜본다. 이미 앨범에 든 사진을 다른 앨범에 넣어도 바뀐다.
+    @Query private var links: [AlbumPhoto]
     @ObservedObject private var access = PhotoAccess.shared
     @ObservedObject private var pro = ProStore.shared
 
     @Environment(\.modelContext) private var context
     /// 미정리 사진. 보관함 전체를 훑어야 해서 백그라운드에서 구한다.
-    @State private var unsortedIDs: [String] = []
+    @State private var libraryIDs: [String] = []
+    /// 이미 앨범에 들어 있는 사진과 그 사진이 든 앨범 이름. 잠긴 앨범 이름은 넣지 않는다.
+    @State private var albumNames: [String: [String]] = [:]
+    /// 지금 격자에 보이는 사진. 그릴 때마다 수천 장을 거르지 않게 미리 구해 둔다.
+    @State private var items: [String] = []
+    @AppStorage("organizeShowsAll") private var showsAll = false
     @State private var reloadToken = 0
     @State private var loaded = false
     @State private var selected: Set<String> = []
     @State private var showAlbums = false
+    /// 크게 보고 있는 사진.
+    @State private var viewing: ViewingPhoto?
     @State private var addedCount = 0
 
     // 꾹 눌러 끌어 고르기. 손가락이 있는 곳은 화면 전체 좌표로 받고, 격자 위치를 빼서 칸을 찾는다.
-    @GestureState private var isPressing = false
+    @State private var isPressing = false
     @State private var drag: GridSelection.Drag?
     @State private var dragLocation: CGPoint?
-    @State private var gridFrame = CGRect.zero
-    @State private var viewport = CGRect.zero
+    /// 격자와 화면의 위치. 스크롤하는 매 프레임 바뀌므로 화면을 다시 그리지 않는 상자에 둔다.
+    @State private var geometry = GridGeometry()
     @State private var autoScroll: Task<Void, Never>?
     @State private var autoScrollDirection = 0
     @State private var dragTicks = 0
@@ -35,12 +44,11 @@ struct OrganizeView: View {
     /// 다시 구해야 하는 때: 권한이 바뀌거나, 앨범에 든 사진 수가 바뀌거나, 탭에 다시 들어왔을 때.
     private struct LoadKey: Equatable {
         let status: Int
-        let photoCount: Int
+        let linkCount: Int
         let token: Int
     }
 
     var body: some View {
-        let items = unsortedIDs
         NavigationStack {
             Group {
                 if access.status == .denied || access.status == .restricted {
@@ -60,10 +68,15 @@ struct OrganizeView: View {
                 } else if items.isEmpty {
                     ScrollView {
                         AutoClassifySection()
-                        ContentUnavailableView {
-                            Label("모두 정리했습니다", systemImage: "checkmark.circle")
-                        } description: {
-                            Text("사진 보관함의 모든 사진이 앨범에 들어 있습니다.")
+                        scopePicker
+                        if showsAll {
+                            ContentUnavailableView("사진이 없습니다", systemImage: "photo")
+                        } else {
+                            ContentUnavailableView {
+                                Label("모두 정리했습니다", systemImage: "checkmark.circle")
+                            } description: {
+                                Text("사진 보관함의 모든 사진이 앨범에 들어 있습니다. 다른 앨범에도 넣으려면 ‘모든 사진’을 보세요.")
+                            }
                         }
                     }
                 } else {
@@ -102,6 +115,9 @@ struct OrganizeView: View {
                 }
             }
             .animation(reduceMotion ? Motion.reduced : Motion.settle, value: selected.isEmpty)
+            .fullScreenCover(item: $viewing) { photo in
+                OrganizePhotoViewer(items: items, albumNames: albumNames, selected: $selected, currentID: photo.id)
+            }
             .sheet(isPresented: $showAlbums) {
                 AddToAlbumsSheet(assetIDs: items.filter { selected.contains($0) }) {
                     selected = []
@@ -110,11 +126,13 @@ struct OrganizeView: View {
             }
             // 사진이 앨범에 들어간 그 순간에만 알린다.
             .sensoryFeedback(.success, trigger: addedCount)
-            .task(id: LoadKey(status: access.status.rawValue, photoCount: photos.count, token: reloadToken)) {
+            .task(id: LoadKey(status: access.status.rawValue, linkCount: links.count, token: reloadToken)) {
                 await load()
                 refreshAuto()
             }
             .onChange(of: pro.isPro) { _, _ in refreshAuto() }
+            // 보이지 않게 된 사진이 선택에 남아 같이 들어가지 않게 한다.
+            .onChange(of: showsAll) { _, _ in updateItems() }
             // 다른 앱에서 사진이 늘었을 수 있으니 탭에 들어올 때마다 다시 본다.
             .onAppear { if loaded { reloadToken += 1 } }
         }
@@ -126,11 +144,7 @@ struct OrganizeView: View {
                 gridContent(items, proxy: proxy)
             }
             // 끌어서 고르는 동안에는 손가락이 화면을 밀지 않는다. 끝으로 가면 대신 저절로 넘긴다.
-            .scrollDisabled(isPressing)
-            .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { viewport = $0 }
-            .onChange(of: isPressing) { _, pressing in
-                if !pressing { endDrag() }
-            }
+            .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { geometry.viewport = $0 }
             .sensoryFeedback(.selection, trigger: dragTicks)
         }
     }
@@ -139,7 +153,10 @@ struct OrganizeView: View {
         // 스크롤 뷰가 원래 내용을 쌓던 기본 간격 그대로.
         VStack {
             AutoClassifySection()
-            Text("미정리 사진 \(items.count.formatted())장 · 아직 어느 앨범에도 없는 사진")
+            scopePicker
+            Text(showsAll
+                 ? "사진 \(items.count.formatted())장 · 앨범에 든 사진도 다른 앨범에 넣을 수 있어요"
+                 : "미정리 사진 \(items.count.formatted())장 · 아직 어느 앨범에도 없는 사진")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -154,38 +171,34 @@ struct OrganizeView: View {
                     cell(id, isOn: selected.contains(id)).id(id)
                 }
             }
-            .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { gridFrame = $0 }
-            .simultaneousGesture(dragSelect(items, proxy: proxy))
+            .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { geometry.grid = $0 }
+            .background {
+                ScrollLongPress(
+                    shouldBegin: { [geometry] in geometry.grid.contains($0) },
+                    onChange: { location in
+                        isPressing = true
+                        dragLocation = location
+                        extend(items)
+                        followEdge(items, proxy: proxy)
+                    },
+                    onEnd: endDrag
+                )
+            }
             .accessibilityIdentifier("unsorted-grid")
-            .animation(reduceMotion ? Motion.reduced : Motion.settle, value: items)
+            .animation(reduceMotion ? Motion.reduced : Motion.settle, value: items.count)
         }
     }
 
     // MARK: 꾹 눌러 끌어 고르기
 
     private var layout: GridSelection.Layout {
-        GridSelection.Layout(columns: Self.gridColumns, spacing: Self.gridSpacing, width: gridFrame.width)
-    }
-
-    /// 사진 앱처럼 꾹 누른 뒤 끌면 지나간 칸까지 고른다. 바로 끌면 그냥 스크롤이다.
-    private func dragSelect(_ items: [String], proxy: ScrollViewProxy) -> some Gesture {
-        LongPressGesture(minimumDuration: 0.3)
-            .sequenced(before: DragGesture(minimumDistance: 0, coordinateSpace: .global))
-            .updating($isPressing) { value, state, _ in
-                if case .second(true, _) = value { state = true }
-            }
-            .onChanged { value in
-                guard case .second(true, let moved) = value, let moved else { return }
-                dragLocation = moved.location
-                extend(items)
-                followEdge(items, proxy: proxy)
-            }
+        GridSelection.Layout(columns: Self.gridColumns, spacing: Self.gridSpacing, width: geometry.grid.width)
     }
 
     /// 손가락이 있는 칸까지 선택을 넓히거나 줄인다.
     private func extend(_ items: [String]) {
         guard let location = dragLocation, !items.isEmpty else { return }
-        let point = CGPoint(x: location.x - gridFrame.minX, y: location.y - gridFrame.minY)
+        let point = CGPoint(x: location.x - geometry.grid.minX, y: location.y - geometry.grid.minY)
         guard let index = layout.index(at: point, count: items.count) else { return }
         if drag == nil { drag = GridSelection.Drag(anchor: index, items: items, selected: selected) }
         guard let drag else { return }
@@ -200,7 +213,7 @@ struct OrganizeView: View {
     private func followEdge(_ items: [String], proxy: ScrollViewProxy) {
         guard let y = dragLocation?.y else { return }
         let edge: CGFloat = 80
-        let direction = y > viewport.maxY - edge ? 1 : (y < viewport.minY + edge ? -1 : 0)
+        let direction = y > geometry.viewport.maxY - edge ? 1 : (y < geometry.viewport.minY + edge ? -1 : 0)
         guard direction != autoScrollDirection else { return }
         autoScroll?.cancel()
         autoScrollDirection = direction
@@ -211,7 +224,7 @@ struct OrganizeView: View {
         autoScroll = Task { @MainActor in
             while !Task.isCancelled, isPressing {
                 // 지금 화면 끝에 걸친 줄의 한 줄 너머를 끝에 맞춘다.
-                let edgeY = (direction > 0 ? viewport.maxY : viewport.minY) - gridFrame.minY
+                let edgeY = (direction > 0 ? geometry.viewport.maxY : geometry.viewport.minY) - geometry.grid.minY
                 let row = layout.row(at: edgeY) + direction
                 let target = min(max(row * Self.gridColumns, 0), items.count - 1)
                 withAnimation(.linear(duration: 0.15)) {
@@ -224,6 +237,7 @@ struct OrganizeView: View {
     }
 
     private func endDrag() {
+        isPressing = false
         autoScroll?.cancel()
         autoScroll = nil
         autoScrollDirection = 0
@@ -232,28 +246,69 @@ struct OrganizeView: View {
         dragLocation = nil
     }
 
+    private var scopePicker: some View {
+        Picker("보기", selection: $showsAll) {
+            Text("미정리").tag(false)
+            Text("모든 사진").tag(true)
+        }
+        .pickerStyle(.segmented)
+        .padding(.horizontal, 20)
+        .padding(.bottom, 4)
+        .accessibilityIdentifier("organize-scope")
+    }
+
     private func cell(_ id: String, isOn: Bool) -> some View {
+        let names = albumNames[id]
+        let inAlbum = names != nil
         let traits: AccessibilityTraits = isOn ? .isSelected : []
+        // 사진 앱처럼 고르는 중이 아니면 눌러서 크게 보고, 고르는 중이면 눌러서 고른다.
+        // 오른쪽 아래 동그라미는 언제나 고르기다.
         return Button {
             guard Date.now >= ignoreTapsUntil else { return }
-            if isOn { selected.remove(id) } else { selected.insert(id) }
+            if selected.isEmpty {
+                viewing = ViewingPhoto(id: id)
+            } else {
+                toggle(id)
+            }
         } label: {
             AssetImage(id: id, pixels: 320)
                 .aspectRatio(1, contentMode: .fit)
                 .overlay { if isOn { Color.white.opacity(0.28) } }
-                .overlay(alignment: .bottomTrailing) {
-                    Image(systemName: isOn ? "checkmark.circle.fill" : "circle")
-                        .font(.title3)
-                        .symbolRenderingMode(.palette)
-                        .foregroundStyle(.white, isOn ? Color.accentColor : Color.clear)
-                        .shadow(color: .black.opacity(0.35), radius: 2)
-                        .padding(6)
+                .overlay(alignment: .topLeading) {
+                    // 모든 사진에서 이미 앨범에 든 사진을 구분한다.
+                    if showsAll, let names {
+                        AlbumTag(names: names).padding(4)
+                    }
                 }
         }
         .buttonStyle(PressableStyle(scale: 0.96))
-        .accessibilityLabel(Text("미정리 사진"))
+        .accessibilityLabel(Text(Self.label(names)))
+        .accessibilityHint(Text(selected.isEmpty ? "크게 봅니다" : "고르거나 풉니다"))
         .accessibilityIdentifier("unsorted-photo")
         .accessibilityAddTraits(traits)
+        .overlay(alignment: .bottomTrailing) {
+            Button {
+                guard Date.now >= ignoreTapsUntil else { return }
+                toggle(id)
+            } label: {
+                Image(systemName: isOn ? "checkmark.circle.fill" : "circle")
+                    .font(.title3)
+                    .symbolRenderingMode(.palette)
+                    .foregroundStyle(.white, isOn ? Color.accentColor : Color.clear)
+                    .shadow(color: .black.opacity(0.35), radius: 2)
+                    .padding(6)
+                    // 작은 동그라미도 손끝으로 누르기 쉽게 칸 모서리를 넉넉히 잡는다.
+                    .frame(width: 44, height: 44, alignment: .bottomTrailing)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(Text(isOn ? "선택 해제" : "선택"))
+            .accessibilityIdentifier("unsorted-select")
+        }
+    }
+
+    private func toggle(_ id: String) {
+        if selected.contains(id) { selected.remove(id) } else { selected.insert(id) }
     }
 
     /// 자동 분류 제안을 다시 구한다. Pro면 장면 분석도 이어 간다.
@@ -264,29 +319,89 @@ struct OrganizeView: View {
         if pro.isPro { model.startSceneAnalysis(container: context.container) }
     }
 
+    /// 사진마다 든 앨범 이름. 보관함 순서대로 놓되 연도 앨범은 맨 뒤로 보낸다.
+    /// "2024년"보다 "24년 제주 여행"처럼 더 구체적인 앨범이 라벨에 먼저 보이게 한다.
+    /// 잠긴 앨범은 이름을 숨기고, 그 앨범에만 든 사진은 빈 목록으로 둔다(앨범에 들었다는 것만 안다).
+    nonisolated static func albumNames(in context: ModelContext) -> [String: [String]] {
+        let sorted = (try? context.fetch(FetchDescriptor<Album>(sortBy: [SortDescriptor(\.sortIndex)]))) ?? []
+        let albums = sorted.filter { $0.kind != .year } + sorted.filter { $0.kind == .year }
+        var names: [String: [String]] = [:]
+        for album in albums {
+            for link in album.links {
+                guard let id = link.photo?.assetIdentifier else { continue }
+                names[id, default: []].append(contentsOf: album.isLocked ? [] : [album.title])
+            }
+        }
+        return names
+    }
+
+    static func label(_ names: [String]?) -> String {
+        guard let names else { return "미정리 사진" }
+        return names.isEmpty ? "앨범에 든 사진" : "앨범 \(names.joined(separator: ", "))에 든 사진"
+    }
+
+    private func updateItems() {
+        let next = showsAll ? libraryIDs : libraryIDs.filter { albumNames[$0] == nil }
+        if next != items { items = next }
+        // 보이지 않게 된 사진이 선택에 남아 같이 들어가지 않게 한다.
+        selected.formIntersection(next)
+    }
+
     private func load() async {
         guard access.status == .authorized || access.status == .limited else {
             loaded = access.status != .notDetermined
             return
         }
         let container = context.container
-        let ids = await Task.detached(priority: .userInitiated) { () -> [String] in
+        let (library, names) = await Task.detached(priority: .userInitiated) { () -> ([String], [String: [String]]) in
             let options = PHFetchOptions()
             options.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
             var library: [String] = []
             PHAsset.fetchAssets(with: .image, options: options).enumerateObjects { asset, _, _ in
                 library.append(asset.localIdentifier)
             }
-            var descriptor = FetchDescriptor<Photo>()
-            descriptor.propertiesToFetch = [\.assetIdentifier]
-            let used = Set(((try? ModelContext(container).fetch(descriptor)) ?? []).map(\.assetIdentifier))
-            return library.filter { !used.contains($0) }
+            return (library, Self.albumNames(in: ModelContext(container)))
         }.value
         guard !Task.isCancelled else { return }
-        unsortedIDs = ids
-        selected.formIntersection(ids)
+        libraryIDs = library
+        albumNames = names
+        updateItems()
         loaded = true
     }
+}
+
+/// 모든 사진 격자에서 사진이 든 앨범을 칸 위쪽에 작게 붙인다. 여러 앨범이면 첫 앨범 이름 뒤에 나머지 수를 단다.
+private struct AlbumTag: View {
+    let names: [String]
+
+    var body: some View {
+        HStack(spacing: 3) {
+            Image(systemName: "rectangle.stack.fill")
+            if let first = names.first {
+                Text(first).lineLimit(1)
+                if names.count > 1 {
+                    Text("+\(names.count - 1)").fontWeight(.semibold).fixedSize()
+                }
+            }
+        }
+        .font(.caption2)
+        .foregroundStyle(.white)
+        .padding(.horizontal, 5)
+        .padding(.vertical, 3)
+        .background(.black.opacity(0.45), in: Capsule())
+        .accessibilityHidden(true)
+    }
+}
+
+/// 크게 볼 사진. 전체 화면 표시에 쓴다.
+private struct ViewingPhoto: Identifiable {
+    let id: String
+}
+
+/// 격자 위치를 담아 두는 상자. 값이 바뀌어도 화면을 다시 그리지 않는다.
+private final class GridGeometry {
+    var grid = CGRect.zero
+    var viewport = CGRect.zero
 }
 
 /// 고른 사진들을 넣을 앨범을 여러 개 고른다.

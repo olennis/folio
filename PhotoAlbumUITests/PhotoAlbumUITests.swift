@@ -420,6 +420,33 @@ final class PhotoAlbumUITests: XCTestCase {
         XCTAssertTrue(app.navigationBars["4장 선택됨"].waitForExistence(timeout: 5))
     }
 
+    func testTappingOrganizePhotoOpensViewerWhereItCanBeSelected() {
+        app.terminate()
+        app.launchArguments = ["-inMemoryStore", "YES"]
+        app.launch()
+        app.tabBars.firstMatch.buttons["정리"].tap()
+        let cells = app.buttons.matching(identifier: "unsorted-photo")
+        XCTAssertTrue(cells.firstMatch.waitForExistence(timeout: 15))
+
+        // 고르는 중이 아니면 사진을 눌러 크게 본다.
+        cells.element(boundBy: 1).tap()
+        let position = app.staticTexts["organize-viewer-position"]
+        XCTAssertTrue(position.waitForExistence(timeout: 5), "사진을 누르면 크게 보여야 한다")
+        XCTAssertTrue(position.label.hasPrefix("2 /"), "누른 사진에서 시작한다: \(position.label)")
+        shot("23-organize-viewer")
+
+        // 크게 보면서 고르고 닫으면 정리 탭에 그대로 골라져 있다.
+        app.buttons["organize-viewer-select"].tap()
+        app.buttons["닫기"].tap()
+        XCTAssertTrue(app.navigationBars["1장 선택됨"].waitForExistence(timeout: 5))
+
+        // 고르는 중에는 사진을 누르면 고른다. 동그라미는 언제나 고른다.
+        cells.element(boundBy: 2).tap()
+        XCTAssertTrue(app.navigationBars["2장 선택됨"].waitForExistence(timeout: 5))
+        app.buttons.matching(identifier: "unsorted-select").element(boundBy: 2).tap()
+        XCTAssertTrue(app.navigationBars["1장 선택됨"].waitForExistence(timeout: 5))
+    }
+
     func testProUserHasNoAlbumLimit() {
         relaunch(["-forcePro", "YES"])
         let created = fillToFreeLimit()

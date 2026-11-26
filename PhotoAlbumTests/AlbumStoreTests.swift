@@ -27,6 +27,26 @@ final class AlbumStoreTests: XCTestCase {
         album.orderedLinks.compactMap { $0.photo?.assetIdentifier }
     }
 
+    // MARK: 정리 탭 앨범 표시
+
+    func testOrganizeShowsEveryAlbumOfAPhotoButHidesLockedAlbumNames() {
+        let year = store.createAlbum(title: "2024년")
+        let jeju = store.createAlbum(title: "24년 제주 여행")
+        let secret = store.createAlbum(title: "비밀")
+        store.add(ids: ["a", "b"], to: year)
+        store.add(ids: ["a"], to: jeju)
+        store.add(ids: ["c"], to: secret)
+        store.setLocked(secret, true)
+
+        let names = OrganizeView.albumNames(in: context)
+        XCTAssertEqual(Set(names["a"] ?? []), ["2024년", "24년 제주 여행"], "한 사진이 든 앨범을 모두 보여 준다")
+        XCTAssertEqual(names["b"], ["2024년"])
+        XCTAssertEqual(names["c"], [], "잠긴 앨범에만 든 사진은 앨범에 들었다는 것만 알린다")
+        XCTAssertNil(names["d"], "앨범에 없는 사진은 미정리로 남는다")
+        XCTAssertEqual(OrganizeView.label(names["c"]), "앨범에 든 사진")
+        XCTAssertEqual(OrganizeView.label(nil), "미정리 사진")
+    }
+
     // MARK: 앨범 CRUD
 
     func testCreateRenameDeleteAlbum() {

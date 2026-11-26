@@ -6,15 +6,16 @@ import SwiftUI
 /// "모든 사진"으로 바꾸면 이미 앨범에 든 사진도 보여서 한 사진을 여러 앨범(2024년, 제주 여행)에 넣을 수 있다.
 struct OrganizeView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Query private var photos: [Photo]
+    /// 사진이 앨범에 들어가거나 빠질 때 다시 구하려고 지켜본다. 이미 앨범에 든 사진을 다른 앨범에 넣어도 바뀐다.
+    @Query private var links: [AlbumPhoto]
     @ObservedObject private var access = PhotoAccess.shared
     @ObservedObject private var pro = ProStore.shared
 
     @Environment(\.modelContext) private var context
     /// 미정리 사진. 보관함 전체를 훑어야 해서 백그라운드에서 구한다.
     @State private var libraryIDs: [String] = []
-    /// 이미 앨범에 들어 있는 사진.
-    @State private var sortedIDs: Set<String> = []
+    /// 이미 앨범에 들어 있는 사진과 그 사진이 든 앨범 이름. 잠긴 앨범 이름은 넣지 않는다.
+    @State private var albumNames: [String: [String]] = [:]
     /// 지금 격자에 보이는 사진. 그릴 때마다 수천 장을 거르지 않게 미리 구해 둔다.
     @State private var items: [String] = []
     @AppStorage("organizeShowsAll") private var showsAll = false
@@ -41,7 +42,7 @@ struct OrganizeView: View {
     /// 다시 구해야 하는 때: 권한이 바뀌거나, 앨범에 든 사진 수가 바뀌거나, 탭에 다시 들어왔을 때.
     private struct LoadKey: Equatable {
         let status: Int
-        let photoCount: Int
+        let linkCount: Int
         let token: Int
     }
 
@@ -120,7 +121,7 @@ struct OrganizeView: View {
             }
             // 사진이 앨범에 들어간 그 순간에만 알린다.
             .sensoryFeedback(.success, trigger: addedCount)
-            .task(id: LoadKey(status: access.status.rawValue, photoCount: photos.count, token: reloadToken)) {
+            .task(id: LoadKey(status: access.status.rawValue, linkCount: links.count, token: reloadToken)) {
                 await load()
                 refreshAuto()
             }
@@ -252,7 +253,8 @@ struct OrganizeView: View {
     }
 
     private func cell(_ id: String, isOn: Bool) -> some View {
-        let inAlbum = sortedIDs.contains(id)
+        let names = albumNames[id]
+        let inAlbum = names != nil
         let traits: AccessibilityTraits = isOn ? .isSelected : []
         return Button {
             guard Date.now >= ignoreTapsUntil else { return }
@@ -263,12 +265,8 @@ struct OrganizeView: View {
                 .overlay { if isOn { Color.white.opacity(0.28) } }
                 .overlay(alignment: .topLeading) {
                     // 모든 사진에서 이미 앨범에 든 사진을 구분한다.
-                    if showsAll, inAlbum {
-                        Image(systemName: "rectangle.stack.fill")
-                            .font(.caption)
-                            .foregroundStyle(.white)
-                            .shadow(color: .black.opacity(0.45), radius: 2)
-                            .padding(6)
+                    if showsAll, let names {
+                        AlbumTag(names: names).padding(4)
                     }
                 }
                 .overlay(alignment: .bottomTrailing) {
@@ -281,7 +279,7 @@ struct OrganizeView: View {
                 }
         }
         .buttonStyle(PressableStyle(scale: 0.96))
-        .accessibilityLabel(Text(inAlbum ? "앨범에 든 사진" : "미정리 사진"))
+        .accessibilityLabel(Text(Self.label(names)))
         .accessibilityIdentifier("unsorted-photo")
         .accessibilityAddTraits(traits)
     }
@@ -294,8 +292,27 @@ struct OrganizeView: View {
         if pro.isPro { model.startSceneAnalysis(container: context.container) }
     }
 
+    /// 사진마다 든 앨범 이름. 보관함 순서대로 놓는다.
+    /// 잠긴 앨범은 이름을 숨기고, 그 앨범에만 든 사진은 빈 목록으로 둔다(앨범에 들었다는 것만 안다).
+    nonisolated static func albumNames(in context: ModelContext) -> [String: [String]] {
+        let albums = (try? context.fetch(FetchDescriptor<Album>(sortBy: [SortDescriptor(\.sortIndex)]))) ?? []
+        var names: [String: [String]] = [:]
+        for album in albums {
+            for link in album.links {
+                guard let id = link.photo?.assetIdentifier else { continue }
+                names[id, default: []].append(contentsOf: album.isLocked ? [] : [album.title])
+            }
+        }
+        return names
+    }
+
+    static func label(_ names: [String]?) -> String {
+        guard let names else { return "미정리 사진" }
+        return names.isEmpty ? "앨범에 든 사진" : "앨범 \(names.joined(separator: ", "))에 든 사진"
+    }
+
     private func updateItems() {
-        let next = showsAll ? libraryIDs : libraryIDs.filter { !sortedIDs.contains($0) }
+        let next = showsAll ? libraryIDs : libraryIDs.filter { albumNames[$0] == nil }
         if next != items { items = next }
         // 보이지 않게 된 사진이 선택에 남아 같이 들어가지 않게 한다.
         selected.formIntersection(next)
@@ -307,23 +324,43 @@ struct OrganizeView: View {
             return
         }
         let container = context.container
-        let (library, used) = await Task.detached(priority: .userInitiated) { () -> ([String], Set<String>) in
+        let (library, names) = await Task.detached(priority: .userInitiated) { () -> ([String], [String: [String]]) in
             let options = PHFetchOptions()
             options.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
             var library: [String] = []
             PHAsset.fetchAssets(with: .image, options: options).enumerateObjects { asset, _, _ in
                 library.append(asset.localIdentifier)
             }
-            var descriptor = FetchDescriptor<Photo>()
-            descriptor.propertiesToFetch = [\.assetIdentifier]
-            let used = Set(((try? ModelContext(container).fetch(descriptor)) ?? []).map(\.assetIdentifier))
-            return (library, used)
+            return (library, Self.albumNames(in: ModelContext(container)))
         }.value
         guard !Task.isCancelled else { return }
         libraryIDs = library
-        sortedIDs = used
+        albumNames = names
         updateItems()
         loaded = true
+    }
+}
+
+/// 모든 사진 격자에서 사진이 든 앨범을 칸 위쪽에 작게 붙인다. 여러 앨범이면 첫 앨범 이름 뒤에 나머지 수를 단다.
+private struct AlbumTag: View {
+    let names: [String]
+
+    var body: some View {
+        HStack(spacing: 3) {
+            Image(systemName: "rectangle.stack.fill")
+            if let first = names.first {
+                Text(first).lineLimit(1)
+                if names.count > 1 {
+                    Text("+\(names.count - 1)").fontWeight(.semibold).fixedSize()
+                }
+            }
+        }
+        .font(.caption2)
+        .foregroundStyle(.white)
+        .padding(.horizontal, 5)
+        .padding(.vertical, 3)
+        .background(.black.opacity(0.45), in: Capsule())
+        .accessibilityHidden(true)
     }
 }
 

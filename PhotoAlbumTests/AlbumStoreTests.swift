@@ -47,6 +47,16 @@ final class AlbumStoreTests: XCTestCase {
         XCTAssertEqual(OrganizeView.label(nil), "미정리 사진")
     }
 
+    func testOrganizeLabelPutsYearAlbumLast() {
+        // 제주 여행을 나중에 넣어도 연도 앨범보다 먼저 보인다.
+        let year = store.createAlbum(title: "2024년")
+        let jeju = store.createAlbum(title: "24년 제주 여행")
+        store.add(ids: ["a"], to: year)
+        store.add(ids: ["a"], to: jeju)
+        XCTAssertEqual(year.kind, .year)
+        XCTAssertEqual(OrganizeView.albumNames(in: context)["a"], ["24년 제주 여행", "2024년"])
+    }
+
     // MARK: 앨범 CRUD
 
     func testCreateRenameDeleteAlbum() {

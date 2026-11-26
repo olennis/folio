@@ -23,6 +23,8 @@ struct OrganizeView: View {
     @State private var loaded = false
     @State private var selected: Set<String> = []
     @State private var showAlbums = false
+    /// 크게 보고 있는 사진.
+    @State private var viewing: ViewingPhoto?
     @State private var addedCount = 0
 
     // 꾹 눌러 끌어 고르기. 손가락이 있는 곳은 화면 전체 좌표로 받고, 격자 위치를 빼서 칸을 찾는다.
@@ -113,6 +115,9 @@ struct OrganizeView: View {
                 }
             }
             .animation(reduceMotion ? Motion.reduced : Motion.settle, value: selected.isEmpty)
+            .fullScreenCover(item: $viewing) { photo in
+                OrganizePhotoViewer(items: items, albumNames: albumNames, selected: $selected, currentID: photo.id)
+            }
             .sheet(isPresented: $showAlbums) {
                 AddToAlbumsSheet(assetIDs: items.filter { selected.contains($0) }) {
                     selected = []
@@ -256,9 +261,15 @@ struct OrganizeView: View {
         let names = albumNames[id]
         let inAlbum = names != nil
         let traits: AccessibilityTraits = isOn ? .isSelected : []
+        // 사진 앱처럼 고르는 중이 아니면 눌러서 크게 보고, 고르는 중이면 눌러서 고른다.
+        // 오른쪽 아래 동그라미는 언제나 고르기다.
         return Button {
             guard Date.now >= ignoreTapsUntil else { return }
-            if isOn { selected.remove(id) } else { selected.insert(id) }
+            if selected.isEmpty {
+                viewing = ViewingPhoto(id: id)
+            } else {
+                toggle(id)
+            }
         } label: {
             AssetImage(id: id, pixels: 320)
                 .aspectRatio(1, contentMode: .fit)
@@ -269,19 +280,35 @@ struct OrganizeView: View {
                         AlbumTag(names: names).padding(4)
                     }
                 }
-                .overlay(alignment: .bottomTrailing) {
-                    Image(systemName: isOn ? "checkmark.circle.fill" : "circle")
-                        .font(.title3)
-                        .symbolRenderingMode(.palette)
-                        .foregroundStyle(.white, isOn ? Color.accentColor : Color.clear)
-                        .shadow(color: .black.opacity(0.35), radius: 2)
-                        .padding(6)
-                }
         }
         .buttonStyle(PressableStyle(scale: 0.96))
         .accessibilityLabel(Text(Self.label(names)))
+        .accessibilityHint(Text(selected.isEmpty ? "크게 봅니다" : "고르거나 풉니다"))
         .accessibilityIdentifier("unsorted-photo")
         .accessibilityAddTraits(traits)
+        .overlay(alignment: .bottomTrailing) {
+            Button {
+                guard Date.now >= ignoreTapsUntil else { return }
+                toggle(id)
+            } label: {
+                Image(systemName: isOn ? "checkmark.circle.fill" : "circle")
+                    .font(.title3)
+                    .symbolRenderingMode(.palette)
+                    .foregroundStyle(.white, isOn ? Color.accentColor : Color.clear)
+                    .shadow(color: .black.opacity(0.35), radius: 2)
+                    .padding(6)
+                    // 작은 동그라미도 손끝으로 누르기 쉽게 칸 모서리를 넉넉히 잡는다.
+                    .frame(width: 44, height: 44, alignment: .bottomTrailing)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(Text(isOn ? "선택 해제" : "선택"))
+            .accessibilityIdentifier("unsorted-select")
+        }
+    }
+
+    private func toggle(_ id: String) {
+        if selected.contains(id) { selected.remove(id) } else { selected.insert(id) }
     }
 
     /// 자동 분류 제안을 다시 구한다. Pro면 장면 분석도 이어 간다.
@@ -292,10 +319,12 @@ struct OrganizeView: View {
         if pro.isPro { model.startSceneAnalysis(container: context.container) }
     }
 
-    /// 사진마다 든 앨범 이름. 보관함 순서대로 놓는다.
+    /// 사진마다 든 앨범 이름. 보관함 순서대로 놓되 연도 앨범은 맨 뒤로 보낸다.
+    /// "2024년"보다 "24년 제주 여행"처럼 더 구체적인 앨범이 라벨에 먼저 보이게 한다.
     /// 잠긴 앨범은 이름을 숨기고, 그 앨범에만 든 사진은 빈 목록으로 둔다(앨범에 들었다는 것만 안다).
     nonisolated static func albumNames(in context: ModelContext) -> [String: [String]] {
-        let albums = (try? context.fetch(FetchDescriptor<Album>(sortBy: [SortDescriptor(\.sortIndex)]))) ?? []
+        let sorted = (try? context.fetch(FetchDescriptor<Album>(sortBy: [SortDescriptor(\.sortIndex)]))) ?? []
+        let albums = sorted.filter { $0.kind != .year } + sorted.filter { $0.kind == .year }
         var names: [String: [String]] = [:]
         for album in albums {
             for link in album.links {
@@ -362,6 +391,11 @@ private struct AlbumTag: View {
         .background(.black.opacity(0.45), in: Capsule())
         .accessibilityHidden(true)
     }
+}
+
+/// 크게 볼 사진. 전체 화면 표시에 쓴다.
+private struct ViewingPhoto: Identifiable {
+    let id: String
 }
 
 /// 격자 위치를 담아 두는 상자. 값이 바뀌어도 화면을 다시 그리지 않는다.

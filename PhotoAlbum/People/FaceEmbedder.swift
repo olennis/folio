@@ -12,7 +12,10 @@ final class CoreMLFaceEmbedder: FaceEmbedder, @unchecked Sendable {
     static let dimension = 128
     private let model: FaceEmbedding
 
-    init(computeUnits: MLComputeUnits = .all) throws {
+    /// GPU는 쓰지 않는다. 앱이 백그라운드(`BGProcessingTask`, 화면 잠김)에 있으면 iOS가 GPU 작업을 막는데
+    /// (`kIOGPUCommandBufferCallbackErrorBackgroundExecutionNotPermitted`), Core ML은 그때 오류 없이 망가진 값을
+    /// 돌려준다. Neural Engine과 CPU는 백그라운드에서도 돈다.
+    init(computeUnits: MLComputeUnits = .cpuAndNeuralEngine) throws {
         let configuration = MLModelConfiguration()
         #if targetEnvironment(simulator)
         // 시뮬레이터에는 GPU·Neural Engine 추론 환경이 없다.
@@ -30,14 +33,24 @@ final class CoreMLFaceEmbedder: FaceEmbedder, @unchecked Sendable {
             return try FaceEmbeddingInput(imageWith: image)
         }
         // 한 번에 넘겨 Core ML이 묶어서 돌게 한다.
-        return try model.predictions(inputs: inputs).map { output in
+        let vectors = try model.predictions(inputs: inputs).map { output in
             let array = output.embedding
             return (0..<array.count).map { array[$0].floatValue }
         }
+        guard vectors.allSatisfy(Self.isValid) else { throw EmbedderError.invalidOutput }
+        return vectors
+    }
+
+    /// dlib 임베딩은 길이가 1.2~1.6쯤이다. 숫자가 아니거나 0에 가까우면 추론이 망가진 것이다.
+    static func isValid(_ vector: [Float]) -> Bool {
+        guard vector.count == dimension, vector.allSatisfy(\.isFinite) else { return false }
+        let norm = vector.reduce(0) { $0 + $1 * $1 }.squareRoot()
+        return norm > 0.5 && norm < 3
     }
 
     enum EmbedderError: Error {
         case badImage
+        case invalidOutput
     }
 }
 

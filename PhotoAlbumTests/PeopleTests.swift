@@ -221,6 +221,50 @@ final class PeopleTests: XCTestCase {
         XCTAssertEqual(all, 60)
     }
 
+    /// 일부 사진은 못 불러오고(iCloud에만 있음) 일부는 임베딩이 망가지는(백그라운드 GPU) 경우.
+    private struct FlakySource: FacePhotoSource {
+        let ids: [String]
+        let missing: Set<String>
+        func assetIDs() -> [String] { ids }
+        func image(for assetID: String, allowNetwork: Bool) -> CGImage? {
+            missing.contains(assetID) ? nil : FakeSource(ids: ids).image(for: assetID, allowNetwork: allowNetwork)
+        }
+    }
+
+    private struct BrokenEmbedder: FaceEmbedder {
+        func embeddings(for chips: [RGBImage]) throws -> [[Float]] { throw CoreMLFaceEmbedder.EmbedderError.invalidOutput }
+    }
+
+    func testPhotosThatFailAreRetriedNextTime() async throws {
+        let (store, _) = try makeStore()
+        let good = FacePipeline(detector: FakeDetector(), aligner: FakeAligner(), embedder: FakeEmbedder())
+        let ids = (0..<10).map { "photo-\($0)" }
+
+        await PeopleIndexer.run(store: store, source: FlakySource(ids: ids, missing: ["photo-1", "photo-2"]), pipeline: good,
+                                clusterer: ChineseWhispersClusterer(), reclusterEvery: 10, allowNetwork: false) { _, _ in }
+        var indexed = await store.indexedAssetIDs()
+        XCTAssertEqual(indexed, Set(ids).subtracting(["photo-1", "photo-2"]), "못 불러온 사진은 본 사진으로 남기지 않는다")
+
+        let broken = FacePipeline(detector: FakeDetector(), aligner: FakeAligner(), embedder: BrokenEmbedder())
+        await PeopleIndexer.run(store: store, source: FakeSource(ids: ids), pipeline: broken,
+                                clusterer: ChineseWhispersClusterer(), reclusterEvery: 10, allowNetwork: false) { _, _ in }
+        indexed = await store.indexedAssetIDs()
+        XCTAssertEqual(indexed.count, 8, "분석이 실패한 사진도 남기지 않는다")
+
+        await PeopleIndexer.run(store: store, source: FakeSource(ids: ids), pipeline: good,
+                                clusterer: ChineseWhispersClusterer(), reclusterEvery: 10, allowNetwork: false) { _, _ in }
+        indexed = await store.indexedAssetIDs()
+        XCTAssertEqual(indexed, Set(ids))
+    }
+
+    func testEmbeddingValidityCheck() {
+        let good = [Float](repeating: 0.12, count: 128) // 길이 1.36
+        XCTAssertTrue(CoreMLFaceEmbedder.isValid(good))
+        XCTAssertFalse(CoreMLFaceEmbedder.isValid([Float](repeating: 0, count: 128)))
+        XCTAssertFalse(CoreMLFaceEmbedder.isValid([Float](repeating: .nan, count: 128)))
+        XCTAssertFalse(CoreMLFaceEmbedder.isValid(Array(good.prefix(64))))
+    }
+
     private actor ProgressBox {
         var values: [(Int, Int)] = []
         func record(_ done: Int, _ total: Int) { values.append((done, total)) }

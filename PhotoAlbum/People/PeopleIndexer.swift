@@ -294,14 +294,16 @@ final class PeopleIndexer: NSObject, ObservableObject {
             if Task.isCancelled { break }
             for id in pending[start..<min(start + batch, pending.count)] {
                 if Task.isCancelled { break }
+                done += 1
                 // 사진 한 장의 임시 메모리(1024px 이미지, 칩)를 바로 돌려준다.
-                let faces: [(box: CGRect, embedding: [Float], quality: Float)] = autoreleasepool {
-                    guard let image = source.image(for: id, allowNetwork: allowNetwork) else { return [] }
-                    return (try? pipeline.faces(in: image)) ?? []
+                // 사진을 못 불러왔거나(iCloud에만 있음) 분석이 실패하면 "본 사진"으로 남기지 않아 다음에 다시 본다.
+                let faces: [(box: CGRect, embedding: [Float], quality: Float)]? = autoreleasepool {
+                    guard let image = source.image(for: id, allowNetwork: allowNetwork) else { return nil }
+                    return try? pipeline.faces(in: image)
                 }
+                guard let faces else { continue }
                 let assigned = await store.add(assetID: id, faces: faces, clusterer: clusterer)
                 sinceRecluster += faces.count - assigned
-                done += 1
             }
             await store.save()
             if sinceRecluster >= reclusterEvery {

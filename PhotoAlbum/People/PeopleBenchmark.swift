@@ -14,6 +14,9 @@ enum PeopleBenchmark {
         var photos: Int
         var faces: Int
         var people: Int
+        /// 큰 사람부터 얼굴 수(최대 15명)와 아무에게도 안 붙은 얼굴 수.
+        var largestPeople: [Int]
+        var unassignedFaces: Int
         var seconds: Double
         var secondsPerPhoto: Double
         var peakMemoryMB: Double
@@ -109,6 +112,8 @@ enum PeopleBenchmark {
             photos: ids.count,
             faces: context.faces,
             people: context.people,
+            largestPeople: context.sizes,
+            unassignedFaces: context.unassigned,
             seconds: seconds,
             secondsPerPhoto: seconds / Double(max(ids.count, 1)),
             peakMemoryMB: max(peak.peakMB, Memory.peakFootprintMB()),
@@ -121,10 +126,16 @@ enum PeopleBenchmark {
 private struct ModelContextBox {
     let faces: Int
     let people: Int
+    let sizes: [Int]
+    let unassigned: Int
     init(container: ModelContainer) {
         let context = ModelContext(container)
-        faces = (try? context.fetchCount(FetchDescriptor<Face>())) ?? 0
-        people = ((try? context.fetch(FetchDescriptor<Person>())) ?? []).filter { $0.faces.count >= 2 }.count
+        let all = (try? context.fetch(FetchDescriptor<Face>())) ?? []
+        faces = all.count
+        unassigned = all.filter { $0.person == nil }.count
+        let counts = ((try? context.fetch(FetchDescriptor<Person>())) ?? []).map(\.faces.count).sorted(by: >)
+        people = counts.filter { $0 >= 2 }.count
+        sizes = Array(counts.prefix(15))
     }
 }
 

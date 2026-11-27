@@ -20,6 +20,11 @@ struct PhotoAlbumApp: App {
         )
     }
 
+    init() {
+        // 얼굴 분석을 충전 중에 이어서 하는 백그라운드 작업. 앱이 뜰 때 한 번 등록해야 한다.
+        PeopleIndexer.registerBackgroundTask()
+    }
+
     var body: some Scene {
         WindowGroup {
             switch store {
@@ -45,6 +50,8 @@ struct PhotoAlbumApp: App {
         DemoSeed.runIfRequested(context: container.mainContext)
         #endif
         await PhotoMetadata.refresh(context: container.mainContext)
+        // 인물: 켜 둔 Pro 사용자면 남은 사진을 이어서 본다.
+        PeopleIndexer.shared.prepare()
     }
 }
 

@@ -72,3 +72,19 @@ dlib `get_face_chip_details` + `extract_image_chip`과 같다.
    - Swift에서는 원본을 2의 거듭제곱 비율로 먼저 면적 평균해 줄여서 근사한다.
    - 이 근사로 dlib 칩과의 임베딩 거리는 0.04~0.06이다. 같은 사람 기준인 0.6의 10% 안팎이다.
    - 피라미드를 쓰지 않는 크기의 얼굴(테스트 68개 중 66개)은 거리가 0.002 이하다.
+
+## 묶기 정확도 측정 세트 (`cluster_set.py`)
+
+LFW(funneled)에서 사진이 20장 이상인 사람 10명 × 20장과 한 장뿐인 사람 50명을 골라,
+위 정렬 + 변환한 Core ML 모델로 임베딩을 만들어 `PhotoAlbumTests/Fixtures/cluster-set.json`으로 쓴다.
+Swift `PeopleClusterAccuracyTests`가 `ChineseWhispersClusterer`로 묶어 쌍 단위 정밀도·재현율을 잰다.
+
+| 임계값 | 정밀도 | 재현율 |
+|---|---|---|
+| 0.50 | 1.000 | 0.980 |
+| 0.55 | 0.989 | 0.990 |
+| 0.60 | 0.749 | 1.000 |
+
+dlib 원본 `chinese_whispers_clustering`으로 다른 표본 5개를 재면 0.6에서 정밀도 평균 0.80(최저 0.64),
+0.5에서 0.998(최저 0.989)이다. 0.6은 두 얼굴을 비교하는 기준이라, 이웃을 따라 번호가 번지는
+Chinese Whispers에서는 닮은 두 사람이 한 사람으로 이어지는 일이 생긴다.

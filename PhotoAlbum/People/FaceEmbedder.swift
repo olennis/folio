@@ -14,7 +14,12 @@ final class CoreMLFaceEmbedder: FaceEmbedder, @unchecked Sendable {
 
     init(computeUnits: MLComputeUnits = .all) throws {
         let configuration = MLModelConfiguration()
+        #if targetEnvironment(simulator)
+        // 시뮬레이터에는 GPU·Neural Engine 추론 환경이 없다.
+        configuration.computeUnits = .cpuOnly
+        #else
         configuration.computeUnits = computeUnits
+        #endif
         model = try FaceEmbedding(configuration: configuration)
     }
 

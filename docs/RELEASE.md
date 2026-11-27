@@ -56,6 +56,23 @@ Xcode에서 결제를 눌러 보려면: Product → Scheme → Edit Scheme → R
 - 개인정보: 장면 분석은 기기 안에서만 하고, 결과는 앱 지원 폴더의 `scene-index.json`에만 둔다. 개인정보 처리방침에 적는다.
   여행 이름의 지명은 여행 가운데 좌표 한 점을 Apple 지도 서비스로 보내 받는다(사진 지명과 같은 방식).
 
+### A-4. 인물(얼굴로 같은 사람 찾기) — 실기기에서 확인할 것
+
+Pro 기능이다. 처음 켤 때 동의 화면을 띄우고, 인물 설정에서 끄면 얼굴 데이터(`people.store`)를 모두 지운다.
+모델은 dlib `dlib_face_recognition_resnet_model_v1`(퍼블릭 도메인)을 Core ML로 옮긴 것이다(`tools/model-conversion/README.md`).
+
+- [ ] **Vision 랜드마크 정확도**: 시뮬레이터의 Vision은 CPU 경로라 랜드마크가 크게 틀려(눈·코가 얼굴 가운데로 몰림) 재지 못했다.
+  기기에서 `FaceAlignerTests/testVisionLandmarksAlignCloseToDlib`을 돌리고, 인물 > 더 보기 > 정렬 디버그(DEBUG)로 dlib 칩과 나란히 본다.
+- [ ] **묶기 임계값**: 명세대로 0.6이다. LFW 측정에서 0.6은 닮은 두 사람을 한 사람으로 잇는 일이 있어 정밀도가 0.75~0.80이고,
+  0.5는 정밀도 0.998·재현율 0.99다(`PeopleClusterAccuracyTests`). 실제 사진으로 보고 `ChineseWhispersClusterer.threshold`를 정한다.
+- [ ] **첫 인덱싱 시간·메모리**: DEBUG 빌드를 `-peopleBenchmark 1000`으로 켜면 최근 사진 1,000장을 메모리 저장소에 분석해
+  콘솔(`PEOPLE_BENCHMARK`)과 Documents/people-benchmark.json에 남긴다. 기준 기기는 iPhone 13.
+- [ ] **백그라운드 작업**: 충전 중 `BGProcessingTask`(`dev.dh.sajincheop.people-index`)로 이어 가는지.
+  Xcode 디버거에서 `e -l objc -- (void)[[BGTaskScheduler sharedScheduler] _simulateLaunchForTaskWithIdentifier:@"dev.dh.sajincheop.people-index"]`로 바로 띄워 볼 수 있다.
+- 개인정보: 얼굴 상자·임베딩(숫자 128개)·이름은 앱 지원 폴더의 `people.store`에만 둔다. 서버로 보내지 않는다.
+  사진 접근 권한 문구에 적었고, 개인정보 처리방침에도 적는다. 개인정보 라벨은 그대로 "데이터를 수집하지 않음".
+- 오픈소스 고지: 인물 설정 화면에 dlib 모델 출처(퍼블릭 도메인)를 적었다.
+
 ### B. 출시 전 보강
 
 - [ ] **최소 iOS 버전 정하기** (지금 iOS 17.0)

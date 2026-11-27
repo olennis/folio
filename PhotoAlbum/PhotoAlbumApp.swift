@@ -51,6 +51,7 @@ struct PhotoAlbumApp: App {
         await PhotoAccess.shared.requestIfNeeded()
         #if DEBUG
         DemoSeed.runIfRequested(context: container.mainContext)
+        PeopleBenchmark.runIfRequested()
         #endif
         await PhotoMetadata.refresh(context: container.mainContext)
         // 인물: 켜 둔 Pro 사용자면 남은 사진을 이어서 본다.

@@ -68,6 +68,7 @@ struct OrganizeView: View {
                 } else if items.isEmpty {
                     ScrollView {
                         AutoClassifySection()
+                        PeopleSection()
                         scopePicker
                         if showsAll {
                             ContentUnavailableView("사진이 없습니다", systemImage: "photo")
@@ -153,6 +154,7 @@ struct OrganizeView: View {
         // 스크롤 뷰가 원래 내용을 쌓던 기본 간격 그대로.
         VStack {
             AutoClassifySection()
+            PeopleSection()
             scopePicker
             Text(showsAll
                  ? "사진 \(items.count.formatted())장 · 앨범에 든 사진도 다른 앨범에 넣을 수 있어요"

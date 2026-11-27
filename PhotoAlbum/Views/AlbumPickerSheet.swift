@@ -151,10 +151,13 @@ struct AlbumChoiceList: View {
 struct LockedRow: View {
     let title: String
     let detail: String
+    var symbol = "sparkles"
+    /// 오른쪽 작은 표시. 잠긴 기능은 "Pro", 켜기만 하면 되는 기능은 "켜기".
+    var badge = "Pro"
 
     var body: some View {
         HStack(spacing: 12) {
-            Image(systemName: "sparkles")
+            Image(systemName: symbol)
                 .font(.title3)
                 .foregroundStyle(.white)
                 .frame(width: 48, height: 48)
@@ -164,7 +167,7 @@ struct LockedRow: View {
                 Text(detail).font(.footnote).foregroundStyle(.secondary)
             }
             Spacer()
-            Text("Pro")
+            Text(badge)
                 .font(.caption.weight(.bold))
                 .foregroundStyle(Color.accentColor)
                 .padding(.horizontal, 8)

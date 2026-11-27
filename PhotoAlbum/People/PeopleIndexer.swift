@@ -141,6 +141,9 @@ final class PeopleIndexer: NSObject, ObservableObject {
 
     /// 앱이 켜질 때. 저장소를 열고, 켜 둔 사람이면 남은 사진을 이어서 본다.
     func prepare() {
+        #if DEBUG
+        if seedDemoIfRequested() { return }
+        #endif
         if container == nil {
             do {
                 let container = try FaceStoreContainer.make()
@@ -220,6 +223,40 @@ final class PeopleIndexer: NSObject, ObservableObject {
             store = FaceStore(modelContainer: container)
         }
     }
+
+    #if DEBUG
+    /// UI 테스트용(`-peopleReset YES`): 켜기 전 상태에서 시작한다. 앱이 뜰 때 한 번만 부른다.
+    nonisolated static func resetIfRequested() {
+        guard UserDefaults.standard.bool(forKey: "peopleReset") else { return }
+        PeopleSettings.isEnabled = false
+        FaceStoreContainer.deleteFiles()
+    }
+
+    /// UI 테스트·캡처용(`-peopleDemo YES`): 시뮬레이터는 Vision 얼굴 찾기가 돌지 않아, 메모리 저장소에
+    /// 보관함 사진으로 두 사람을 만들어 둔다. 실제 분석은 하지 않는다.
+    private func seedDemoIfRequested() -> Bool {
+        guard UserDefaults.standard.bool(forKey: "peopleDemo") else { return false }
+        // 켜짐 상태는 실행 인자(`-people.enabled YES`)로 준다. 기기 설정에 남기지 않는다.
+        guard container == nil, let container = try? FaceStoreContainer.make(inMemory: true) else { return true }
+        self.container = container
+        let store = FaceStore(modelContainer: container)
+        self.store = store
+        let ids = PhotoKitFaceSource().assetIDs()
+        Task {
+            for (index, id) in ids.prefix(10).enumerated() {
+                let person = index < 6 ? 0 : 1
+                var vector = [Float](repeating: 0, count: 128)
+                vector[person] = 1
+                vector[2 + index] = 0.05
+                await store.add(assetID: id, faces: [(CGRect(x: 0.3, y: 0.2, width: 0.4, height: 0.4), vector, 0.8)],
+                                clusterer: clusterer)
+            }
+            await store.recluster(using: clusterer)
+            revision += 1
+        }
+        return true
+    }
+    #endif
 
     // MARK: 사용자 보정(화면에서 부른다)
 

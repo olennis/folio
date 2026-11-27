@@ -23,6 +23,9 @@ struct PhotoAlbumApp: App {
     init() {
         // 얼굴 분석을 충전 중에 이어서 하는 백그라운드 작업. 앱이 뜰 때 한 번 등록해야 한다.
         PeopleIndexer.registerBackgroundTask()
+        #if DEBUG
+        PeopleIndexer.resetIfRequested()
+        #endif
     }
 
     var body: some Scene {

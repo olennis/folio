@@ -226,3 +226,36 @@ final class PeopleTests: XCTestCase {
         func record(_ done: Int, _ total: Int) { values.append((done, total)) }
     }
 }
+
+/// 자동 분류의 인물 앨범 제안.
+final class PersonSuggestionTests: XCTestCase {
+    private func photos(_ n: Int) -> [LibraryPhoto] {
+        (0..<n).map { LibraryPhoto(id: "p\($0)", takenAt: Date(timeIntervalSince1970: Double(1_700_000_000 - $0 * 3600)), latitude: nil, longitude: nil) }
+    }
+
+    func testPersonWithEnoughPhotosIsSuggestedAsNewPersonAlbumInTakenOrder() {
+        let ids = (0..<12).map { "p\($0)" }
+        let person = PersonSnapshot(id: UUID(), name: nil, isHidden: false, assetIDs: ids)
+        let found = AutoClassifier.people([person], photos: photos(12), albums: [], thresholds: .init())
+        XCTAssertEqual(found.count, 1)
+        XCTAssertEqual(found[0].newKind, .person)
+        XCTAssertEqual(found[0].title, "이름 없는 인물")
+        XCTAssertEqual(found[0].assetIDs.first, "p11", "찍은 순서(오래된 사진부터)")
+        XCTAssertNil(found[0].targetAlbumID)
+    }
+
+    func testFewPhotosHiddenPeopleAndFullAlbumsAreNotSuggested() {
+        let few = PersonSnapshot(id: UUID(), name: nil, isHidden: false, assetIDs: ["p0", "p1"])
+        let hidden = PersonSnapshot(id: UUID(), name: nil, isHidden: true, assetIDs: (0..<12).map { "p\($0)" })
+        XCTAssertTrue(AutoClassifier.people([few, hidden], photos: photos(12), albums: [], thresholds: .init()).isEmpty)
+
+        // 같은 이름의 인물 앨범이 있으면 빠진 사진만 채운다. 다 들어 있으면 제안하지 않는다.
+        let named = PersonSnapshot(id: UUID(), name: "서윤", isHidden: false, assetIDs: ["p0", "p1", "p2"])
+        let album = AlbumSnapshot(id: UUID(), title: "서윤", kind: .person, assetIDs: ["p0"])
+        let fill = AutoClassifier.people([named], photos: photos(3), albums: [album], thresholds: .init())
+        XCTAssertEqual(fill.first?.targetAlbumID, album.id)
+        XCTAssertEqual(Set(fill.first?.assetIDs ?? []), ["p1", "p2"])
+        let full = AlbumSnapshot(id: UUID(), title: "서윤", kind: .person, assetIDs: ["p0", "p1", "p2"])
+        XCTAssertTrue(AutoClassifier.people([named], photos: photos(3), albums: [full], thresholds: .init()).isEmpty)
+    }
+}

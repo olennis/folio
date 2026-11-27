@@ -515,15 +515,26 @@ final class PhotoAlbumUITests: XCTestCase {
         XCTAssertTrue(cells.firstMatch.waitForExistence(timeout: 5))
         XCTAssertEqual(cells.count, 2)
         shot("27-people-list")
-        cells.element(boundBy: 1).press(forDuration: 1.0)
-        app.buttons["다른 사람과 합치기"].tap()
-        let target = app.buttons.matching(identifier: "merge-target").firstMatch
-        XCTAssertTrue(target.waitForExistence(timeout: 5))
-        target.tap()
+        // 선택 모드에서 두 사람을 골라 한 번에 합친다.
+        app.buttons["people-select"].tap()
+        let merge = app.buttons["people-merge-selected"]
+        XCTAssertTrue(merge.waitForExistence(timeout: 5))
+        XCTAssertFalse(merge.isEnabled, "한 명 이하로는 합칠 수 없다")
+        cells.element(boundBy: 0).tap()
+        cells.element(boundBy: 1).tap()
+        XCTAssertTrue(merge.isEnabled)
+        shot("28-people-multiselect")
+        merge.tap()
+        let targets = app.buttons.matching(identifier: "merge-target")
+        XCTAssertTrue(targets.firstMatch.waitForExistence(timeout: 5))
+        XCTAssertEqual(targets.count, 2, "고른 두 사람 가운데 남길 사람을 고른다")
+        XCTAssertTrue(targets.firstMatch.label.contains("서윤"), "이름 있는 사람이 맨 위(추천)")
+        targets.firstMatch.tap()
         app.buttons["합치기"].tap()
         let one = NSPredicate(format: "count == 1")
         expectation(for: one, evaluatedWith: cells)
         waitForExpectations(timeout: 5)
+        XCTAssertTrue(app.staticTexts["서윤"].exists, "남긴 사람의 이름이 남는다")
     }
 
     func testProUserHasNoAlbumLimit() {

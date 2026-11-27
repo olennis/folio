@@ -107,8 +107,10 @@ struct PeopleView: View {
     @State private var people: [PersonSummary] = []
     @State private var showHidden = false
     @State private var renaming: PersonSummary?
-    @State private var merging: PersonSummary?
+    @State private var merging: MergeRequest?
     @State private var settings = false
+    @State private var selecting = false
+    @State private var selected: Set<UUID> = []
 
     private let columns = [GridItem(.adaptive(minimum: 96), spacing: 16)]
 
@@ -117,10 +119,17 @@ struct PeopleView: View {
             if access.status == .limited { LimitedAccessBanner().padding(.horizontal, 20) }
             LazyVGrid(columns: columns, spacing: 20) {
                 ForEach(people) { person in
-                    NavigationLink { PersonDetailView(personID: person.id) } label: { cell(person) }
-                        .buttonStyle(PressableStyle())
-                        .contextMenu { menu(person) }
-                        .accessibilityIdentifier("person-cell")
+                    if selecting {
+                        Button { toggle(person.id) } label: { cell(person) }
+                            .buttonStyle(PressableStyle())
+                            .accessibilityAddTraits(selected.contains(person.id) ? .isSelected : [])
+                            .accessibilityIdentifier("person-cell")
+                    } else {
+                        NavigationLink { PersonDetailView(personID: person.id) } label: { cell(person) }
+                            .buttonStyle(PressableStyle())
+                            .contextMenu { menu(person) }
+                            .accessibilityIdentifier("person-cell")
+                    }
                 }
             }
             .padding(20)
@@ -128,30 +137,104 @@ struct PeopleView: View {
                 ContentUnavailableView("찾은 사람이 없어요", systemImage: "person.2", description: Text(showHidden ? "숨긴 사람도 없어요." : "사진을 살펴보면 여기에 사람이 모여요."))
             }
         }
-        .navigationTitle("인물")
+        .navigationTitle(selecting ? (selected.isEmpty ? "사람 선택" : "\(selected.count)명 선택됨") : "인물")
+        .navigationBarTitleDisplayMode(selecting ? .inline : .automatic)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
-                Menu {
-                    Toggle("숨긴 사람 보기", systemImage: "eye.slash", isOn: $showHidden)
-                    Button("인물 설정", systemImage: "gearshape") { settings = true }
-                    #if DEBUG
-                    NavigationLink { FaceAlignmentDebugView() } label: { Label("정렬 디버그", systemImage: "ladybug") }
-                    #endif
-                } label: {
-                    Label("더 보기", systemImage: "ellipsis.circle")
+                Button(selecting ? "완료" : "선택") {
+                    selecting.toggle()
+                    selected = []
+                }
+                .disabled(people.isEmpty && !selecting)
+                .accessibilityIdentifier("people-select")
+            }
+            if !selecting {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Menu {
+                        Toggle("숨긴 사람 보기", systemImage: "eye.slash", isOn: $showHidden)
+                        Button("인물 설정", systemImage: "gearshape") { settings = true }
+                        #if DEBUG
+                        NavigationLink { FaceAlignmentDebugView() } label: { Label("정렬 디버그", systemImage: "ladybug") }
+                        #endif
+                    } label: {
+                        Label("더 보기", systemImage: "ellipsis.circle")
+                    }
                 }
             }
         }
+        .safeAreaInset(edge: .bottom) {
+            if selecting { selectionBar }
+        }
         .sheet(isPresented: $settings) { PeopleSettingsView() }
-        .sheet(item: $merging) { MergePeopleSheet(source: $0) }
+        .sheet(item: $merging) { request in
+            MergePeopleSheet(sources: request.sources, candidates: request.candidates) {
+                selecting = false
+                selected = []
+            }
+        }
         .modifier(RenamePersonAlert(person: $renaming))
         .task(id: "\(indexer.revision)#\(showHidden)") { reload() }
     }
 
+    private var chosen: [PersonSummary] { people.filter { selected.contains($0.id) } }
+
+    /// 고른 사람을 한 번에 합치거나 숨긴다.
+    private var selectionBar: some View {
+        HStack(spacing: 12) {
+            Button {
+                merging = MergeRequest(sources: chosen, candidates: chosen)
+            } label: {
+                Label(selected.count >= 2 ? "\(selected.count)명 합치기" : "합치기", systemImage: "person.2.fill")
+                    .font(.headline)
+                    .frame(maxWidth: .infinity, minHeight: 28)
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(selected.count < 2)
+            .accessibilityIdentifier("people-merge-selected")
+            let hide = chosen.contains { !$0.isHidden }
+            Button {
+                let ids = selected
+                Task {
+                    for id in ids { await indexer.setHidden(id, hide) }
+                    selected = []
+                }
+            } label: {
+                Label(hide ? "숨기기" : "숨김 해제", systemImage: hide ? "eye.slash" : "eye")
+                    .frame(minHeight: 28)
+            }
+            .buttonStyle(.bordered)
+            .disabled(selected.isEmpty)
+            .accessibilityIdentifier("people-hide-selected")
+        }
+        .buttonBorderShape(.capsule)
+        .padding(.horizontal, 20)
+        .padding(.vertical, 8)
+        .background(.bar)
+    }
+
+    private func toggle(_ id: UUID) {
+        if selected.contains(id) { selected.remove(id) } else { selected.insert(id) }
+    }
+
     private func cell(_ person: PersonSummary) -> some View {
-        VStack(spacing: 6) {
+        let isOn = selected.contains(person.id)
+        return VStack(spacing: 6) {
             FaceThumbnail(assetID: person.faceAssetID, box: person.faceBox, size: 88)
                 .opacity(person.isHidden ? 0.45 : 1)
+                .overlay {
+                    if isOn { Circle().strokeBorder(Color.accentColor, lineWidth: 3) }
+                }
+                .overlay(alignment: .bottomTrailing) {
+                    if selecting {
+                        Image(systemName: isOn ? "checkmark.circle.fill" : "circle")
+                            .font(.title2)
+                            .symbolRenderingMode(.palette)
+                            .foregroundStyle(.white, isOn ? Color.accentColor : Color.black.opacity(0.25))
+                            .shadow(color: .black.opacity(0.3), radius: 2)
+                    }
+                }
+                .scaleEffect(isOn ? 0.94 : 1)
+                .animation(.spring(response: 0.25, dampingFraction: 0.8), value: isOn)
             Text(person.displayName)
                 .font(.subheadline.weight(.medium))
                 .foregroundStyle(person.name == nil ? .secondary : .primary)
@@ -166,7 +249,13 @@ struct PeopleView: View {
     @ViewBuilder
     private func menu(_ person: PersonSummary) -> some View {
         Button("이름 지정", systemImage: "pencil") { renaming = person }
-        Button("다른 사람과 합치기", systemImage: "person.2") { merging = person }
+        Button("다른 사람과 합치기", systemImage: "person.2") {
+            merging = MergeRequest(sources: [person], candidates: people.filter { $0.id != person.id })
+        }
+        Button("여러 사람 선택", systemImage: "checkmark.circle") {
+            selecting = true
+            selected = [person.id]
+        }
         Button(person.isHidden ? "숨김 해제" : "숨기기", systemImage: person.isHidden ? "eye" : "eye.slash") {
             Task { await indexer.setHidden(person.id, !person.isHidden) }
         }
@@ -175,7 +264,16 @@ struct PeopleView: View {
     private func reload() {
         guard let container = indexer.container else { return }
         people = PeopleQuery.people(in: container, includeHidden: showHidden)
+        // 합치거나 숨겨서 사라진 사람은 선택에서 뺀다.
+        selected.formIntersection(people.map(\.id))
     }
+}
+
+/// 합치기 시트에 넘기는 값: 합칠 사람들과, 남길 사람 후보.
+struct MergeRequest: Identifiable {
+    let id = UUID()
+    let sources: [PersonSummary]
+    let candidates: [PersonSummary]
 }
 
 /// 한 사람이 나온 사진. 고르면 "이 사람 아님"으로 뺄 수 있고, 앨범으로 만들 수 있다.
@@ -363,44 +461,92 @@ struct RenamePersonAlert: ViewModifier {
 
 /// 다른 사람과 합치기. 고른 사람 쪽으로 얼굴을 모두 옮긴다.
 struct MergePeopleSheet: View {
-    let source: PersonSummary
+    /// 합칠 사람. 한 명이면 다른 사람 가운데 고르고, 여럿이면 그 가운데 남길 사람을 고른다.
+    let sources: [PersonSummary]
+    /// 남길 사람 후보. nil이면 sources를 뺀 모든 사람.
+    var candidates: [PersonSummary]?
+    var onMerged: () -> Void = {}
     @Environment(\.dismiss) private var dismiss
     @ObservedObject private var indexer = PeopleIndexer.shared
     @State private var people: [PersonSummary] = []
     @State private var target: PersonSummary?
 
+    init(source: PersonSummary) {
+        sources = [source]
+        candidates = nil
+    }
+
+    init(sources: [PersonSummary], candidates: [PersonSummary], onMerged: @escaping () -> Void = {}) {
+        self.sources = sources
+        self.candidates = candidates
+        self.onMerged = onMerged
+    }
+
+    /// 여러 사람 가운데 남길 사람을 고르는 경우.
+    private var choosingKeeper: Bool { sources.count > 1 }
+
     var body: some View {
         NavigationStack {
-            List(people) { person in
-                Button { target = person } label: {
-                    HStack(spacing: 12) {
-                        FaceThumbnail(assetID: person.faceAssetID, box: person.faceBox, size: 44)
-                        VStack(alignment: .leading) {
-                            Text(person.displayName).foregroundStyle(.primary)
-                            Text("사진 \(person.photoCount.formatted())장").font(.footnote).foregroundStyle(.secondary)
+            List {
+                Section {
+                    ForEach(people) { person in
+                        Button { target = person } label: {
+                            HStack(spacing: 12) {
+                                FaceThumbnail(assetID: person.faceAssetID, box: person.faceBox, size: 44)
+                                VStack(alignment: .leading) {
+                                    Text(person.displayName).foregroundStyle(.primary)
+                                    Text("사진 \(person.photoCount.formatted())장").font(.footnote).foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                if choosingKeeper, person.id == suggested?.id {
+                                    Text("추천").font(.caption.weight(.semibold)).foregroundStyle(Color.accentColor)
+                                }
+                            }
                         }
+                        .accessibilityIdentifier("merge-target")
+                    }
+                } footer: {
+                    if choosingKeeper {
+                        Text("고른 사람의 이름이 남고, 나머지 \(sources.count - 1)명의 사진이 모두 이 사람으로 모여요.")
                     }
                 }
-                .accessibilityIdentifier("merge-target")
             }
-            .navigationTitle("누구와 합칠까요?")
+            .navigationTitle(choosingKeeper ? "누구로 합칠까요?" : "누구와 합칠까요?")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("취소") { dismiss() } } }
-            .confirmationDialog("‘\(source.displayName)’을 ‘\(target?.displayName ?? "")’에 합칠까요?",
-                                isPresented: Binding(get: { target != nil }, set: { if !$0 { target = nil } }),
+            .confirmationDialog(question, isPresented: Binding(get: { target != nil }, set: { if !$0 { target = nil } }),
                                 titleVisibility: .visible) {
                 Button("합치기") {
-                    if let target { Task { await indexer.merge(source.id, into: target.id); dismiss() } }
+                    guard let target else { return }
+                    let ids = sources.map(\.id).filter { $0 != target.id }
+                    Task {
+                        await indexer.merge(ids, into: target.id)
+                        onMerged()
+                        dismiss()
+                    }
                 }
             } message: {
-                Text("두 사람의 사진이 한 사람으로 모여요.")
+                Text("사진이 한 사람으로 모여요. 이 사람은 확인한 사람으로 고정돼요.")
             }
         }
         .presentationDetents([.medium, .large])
         .task {
-            guard let container = indexer.container else { return }
-            people = PeopleQuery.people(in: container, includeHidden: true).filter { $0.id != source.id }
+            if let candidates {
+                // 이름 있는 사람, 사진 많은 사람 순(남길 사람으로 알맞은 순).
+                people = candidates.sorted { ($0.name == nil ? 1 : 0, -$0.photoCount) < ($1.name == nil ? 1 : 0, -$1.photoCount) }
+            } else if let container = indexer.container {
+                let ids = Set(sources.map(\.id))
+                people = PeopleQuery.people(in: container, includeHidden: true).filter { !ids.contains($0.id) }
+            }
         }
+    }
+
+    private var suggested: PersonSummary? { people.first }
+
+    private var question: String {
+        guard let target else { return "" }
+        if choosingKeeper { return "\(sources.count)명을 ‘\(target.displayName)’(으)로 합칠까요?" }
+        return "‘\(sources[0].displayName)’을 ‘\(target.displayName)’에 합칠까요?"
     }
 }
 

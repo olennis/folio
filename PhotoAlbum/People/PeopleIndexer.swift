@@ -261,7 +261,11 @@ final class PeopleIndexer: NSObject, ObservableObject {
     // MARK: 사용자 보정(화면에서 부른다)
 
     func rename(_ id: UUID, to name: String) async { await store?.rename(id, to: name); revision += 1 }
-    func merge(_ source: UUID, into target: UUID) async { await store?.merge(source, into: target); revision += 1 }
+    func merge(_ source: UUID, into target: UUID) async { await merge([source], into: target) }
+    func merge(_ sources: [UUID], into target: UUID) async {
+        for source in sources { await store?.merge(source, into: target) }
+        revision += 1
+    }
     func exclude(faces: Set<UUID>, from person: UUID) async { await store?.exclude(faceIDs: faces, from: person); revision += 1 }
     func setHidden(_ id: UUID, _ hidden: Bool) async { await store?.setHidden(id, hidden); revision += 1 }
 

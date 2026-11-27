@@ -12,8 +12,9 @@ protocol FaceClustering: Sendable {
 /// 거리가 `threshold` 미만인 얼굴끼리 선(가중치 1)으로 잇고, 무작위로 고른 얼굴이 이웃에서 가장 많이 쓰는
 /// 번호를 따라가게 하는 일을 `iterations × 얼굴 수`번 되풀이한다. 같은 입력이면 같은 결과가 나오게 씨앗을 고정한다.
 struct ChineseWhispersClusterer: FaceClustering {
-    /// 이 거리보다 가까우면 같은 사람으로 본다(dlib 기준 0.6).
-    var threshold: Float = 0.6
+    /// 이 거리보다 가까우면 같은 사람으로 잇는다. dlib의 두 얼굴 비교 기준은 0.6이지만, 이웃을 따라 번호가 번지는
+    /// Chinese Whispers에서는 0.6이면 닮은 두 사람이 이어진다(LFW 정밀도 0.75). 0.5는 정밀도 1.000·재현율 0.980.
+    var threshold: Float = 0.5
     var iterations = 100
     var seed: UInt64 = 0x5EED
 

@@ -87,4 +87,4 @@ Swift `PeopleClusterAccuracyTests`가 `ChineseWhispersClusterer`로 묶어 쌍 �
 
 dlib 원본 `chinese_whispers_clustering`으로 다른 표본 5개를 재면 0.6에서 정밀도 평균 0.80(최저 0.64),
 0.5에서 0.998(최저 0.989)이다. 0.6은 두 얼굴을 비교하는 기준이라, 이웃을 따라 번호가 번지는
-Chinese Whispers에서는 닮은 두 사람이 한 사람으로 이어지는 일이 생긴다.
+Chinese Whispers에서는 닮은 두 사람이 한 사람으로 이어지는 일이 생긴다. 그래서 앱 기본값은 0.5다.

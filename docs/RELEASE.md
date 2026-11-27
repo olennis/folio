@@ -63,8 +63,8 @@ Pro 기능이다. 처음 켤 때 동의 화면을 띄우고, 인물 설정에서
 
 - [ ] **Vision 랜드마크 정확도**: 시뮬레이터의 Vision은 CPU 경로라 랜드마크가 크게 틀려(눈·코가 얼굴 가운데로 몰림) 재지 못했다.
   기기에서 `FaceAlignerTests/testVisionLandmarksAlignCloseToDlib`을 돌리고, 인물 > 더 보기 > 정렬 디버그(DEBUG)로 dlib 칩과 나란히 본다.
-- [ ] **묶기 임계값**: 명세대로 0.6이다. LFW 측정에서 0.6은 닮은 두 사람을 한 사람으로 잇는 일이 있어 정밀도가 0.75~0.80이고,
-  0.5는 정밀도 0.998·재현율 0.99다(`PeopleClusterAccuracyTests`). 실제 사진으로 보고 `ChineseWhispersClusterer.threshold`를 정한다.
+- [x] **묶기 임계값**: 0.5(`ChineseWhispersClusterer.threshold`). 명세의 0.6은 LFW 측정에서 닮은 두 사람을 한 사람으로 잇는 일이 있어
+  정밀도가 0.75~0.80이었고, 0.5는 정밀도 0.998·재현율 0.99다(`PeopleClusterAccuracyTests`). 실제 사진에서 한 사람이 여럿으로 갈리면 합치기로 고친다.
 - [ ] **첫 인덱싱 시간·메모리**: DEBUG 빌드를 `-peopleBenchmark 1000`으로 켜면 최근 사진 1,000장을 메모리 저장소에 분석해
   콘솔(`PEOPLE_BENCHMARK`)과 Documents/people-benchmark.json에 남긴다. 기준 기기는 iPhone 13.
 - [ ] **백그라운드 작업**: 충전 중 `BGProcessingTask`(`dev.dh.sajincheop.people-index`)로 이어 가는지.

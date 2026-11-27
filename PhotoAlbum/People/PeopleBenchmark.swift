@@ -3,6 +3,7 @@ import CoreGraphics
 import Foundation
 import os
 import SwiftData
+import UIKit
 
 /// 첫 인덱싱 시간과 메모리를 잰다(DEBUG 전용, `-peopleBenchmark 1000`).
 ///
@@ -17,6 +18,8 @@ enum PeopleBenchmark {
         /// 큰 사람부터 얼굴 수(최대 15명)와 아무에게도 안 붙은 얼굴 수.
         var largestPeople: [Int]
         var unassignedFaces: Int
+        /// 얼굴 특징값 사이 거리 분포(10%, 50%, 90%). 서로 다른 사람이 섞인 보관함이면 중앙값이 0.6을 넘는다.
+        var pairDistances: [Float]
         var seconds: Double
         var secondsPerPhoto: Double
         var peakMemoryMB: Double
@@ -45,6 +48,10 @@ enum PeopleBenchmark {
         private var totals: [String: Double] = [:]
         func add(_ stage: String, _ seconds: Double) { lock.lock(); totals[stage, default: 0] += seconds; lock.unlock() }
         var values: [String: Double] { lock.lock(); defer { lock.unlock() }; return totals }
+        private var chips = 0
+        private(set) var exported: [[Float]] = []
+        func export(_ vector: [Float]) -> Int { lock.lock(); defer { lock.unlock() }; exported.append(vector); return exported.count - 1 }
+        func nextChip(limit: Int) -> Int? { lock.lock(); defer { lock.unlock() }; guard chips < limit else { return nil }; chips += 1; return chips }
     }
 
     private struct TimedSource: FacePhotoSource {
@@ -73,8 +80,17 @@ enum PeopleBenchmark {
         let timer: Timer
         func chip(from image: RGBImage, landmarks: [CGPoint]) -> RGBImage? {
             let start = Date()
-            defer { timer.add("정렬", Date().timeIntervalSince(start)) }
-            return base.chip(from: image, landmarks: landmarks)
+            let chip = base.chip(from: image, landmarks: landmarks)
+            timer.add("정렬", Date().timeIntervalSince(start))
+            // 처음 몇 장은 눈으로 확인하려고 Documents/benchmark-chips에 남긴다.
+            if let chip, let n = timer.nextChip(limit: 12), let cg = chip.cgImage(),
+               let folder = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first?.appendingPathComponent("benchmark-chips") {
+                try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+                try? UIImage(cgImage: cg).pngData()?.write(to: folder.appendingPathComponent("chip-\(n).png"))
+                let scale = String(format: "%.2f", hypot(landmarks[0].x - landmarks[2].x, landmarks[0].y - landmarks[2].y))
+                try? "\(image.width)x\(image.height) eyes \(scale) \(landmarks)".write(to: folder.appendingPathComponent("chip-\(n).txt"), atomically: true, encoding: .utf8)
+            }
+            return chip
         }
     }
 
@@ -83,8 +99,22 @@ enum PeopleBenchmark {
         let timer: Timer
         func embeddings(for chips: [RGBImage]) throws -> [[Float]] {
             let start = Date()
-            defer { timer.add("임베딩(Core ML)", Date().timeIntervalSince(start)) }
-            return try base.embeddings(for: chips)
+            let vectors = try base.embeddings(for: chips)
+            timer.add("임베딩(Core ML)", Date().timeIntervalSince(start))
+            // 묶는 방식 비교용(-peopleExport): 얼굴 이미지와 특징값을 짝지어 Documents/people-export에 남긴다.
+            if UserDefaults.standard.bool(forKey: "peopleExport"),
+               let folder = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first?.appendingPathComponent("people-export") {
+                try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+                for (chip, vector) in zip(chips, vectors) {
+                    let n = timer.export(vector)
+                    if let cg = chip.cgImage() {
+                        let small = UIGraphicsImageRenderer(size: CGSize(width: 96, height: 96), format: { let f = UIGraphicsImageRendererFormat(); f.scale = 1; return f }())
+                            .jpegData(withCompressionQuality: 0.8) { _ in UIImage(cgImage: cg).draw(in: CGRect(x: 0, y: 0, width: 96, height: 96)) }
+                        try? small.write(to: folder.appendingPathComponent("face-\(n).jpg"))
+                    }
+                }
+            }
+            return vectors
         }
     }
 
@@ -103,9 +133,13 @@ enum PeopleBenchmark {
         peak.start()
         let start = Date()
         await PeopleIndexer.run(store: store, source: TimedSource(ids: ids, timer: timer), pipeline: pipeline,
-                                clusterer: ChineseWhispersClusterer(), reclusterEvery: 150, allowNetwork: false) { _, _ in }
+                                clusterer: AverageLinkageClusterer(), reclusterEvery: 150, allowNetwork: false) { _, _ in }
         let seconds = Date().timeIntervalSince(start)
         peak.stop()
+        if UserDefaults.standard.bool(forKey: "peopleExport"),
+           let folder = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first?.appendingPathComponent("people-export") {
+            try? JSONEncoder().encode(timer.exported).write(to: folder.appendingPathComponent("embeddings.json"))
+        }
         let context = ModelContextBox(container: container)
         return Result(
             device: Memory.deviceModel(),
@@ -114,6 +148,7 @@ enum PeopleBenchmark {
             people: context.people,
             largestPeople: context.sizes,
             unassignedFaces: context.unassigned,
+            pairDistances: context.distances,
             seconds: seconds,
             secondsPerPhoto: seconds / Double(max(ids.count, 1)),
             peakMemoryMB: max(peak.peakMB, Memory.peakFootprintMB()),
@@ -128,9 +163,15 @@ private struct ModelContextBox {
     let people: Int
     let sizes: [Int]
     let unassigned: Int
+    let distances: [Float]
     init(container: ModelContainer) {
         let context = ModelContext(container)
         let all = (try? context.fetch(FetchDescriptor<Face>())) ?? []
+        let vectors = all.prefix(300).map(\.vector)
+        var gaps: [Float] = []
+        for i in vectors.indices { for j in vectors.indices where j > i { gaps.append(FaceVector.distance(vectors[i], vectors[j])) } }
+        gaps.sort()
+        distances = gaps.isEmpty ? [] : [0.1, 0.5, 0.9].map { gaps[Int(Float(gaps.count - 1) * $0)] }
         faces = all.count
         unassigned = all.filter { $0.person == nil }.count
         let counts = ((try? context.fetch(FetchDescriptor<Person>())) ?? []).map(\.faces.count).sorted(by: >)

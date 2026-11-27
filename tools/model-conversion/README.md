@@ -87,4 +87,8 @@ Swift `PeopleClusterAccuracyTests`가 `ChineseWhispersClusterer`로 묶어 쌍 �
 
 dlib 원본 `chinese_whispers_clustering`으로 다른 표본 5개를 재면 0.6에서 정밀도 평균 0.80(최저 0.64),
 0.5에서 0.998(최저 0.989)이다. 0.6은 두 얼굴을 비교하는 기준이라, 이웃을 따라 번호가 번지는
-Chinese Whispers에서는 닮은 두 사람이 한 사람으로 이어지는 일이 생긴다. 그래서 앱 기본값은 0.5다.
+Chinese Whispers에서는 닮은 두 사람이 한 사람으로 이어지는 일이 생긴다.
+
+실제 보관함(아이 둘·어른 둘)에서는 Chinese Whispers가 0.5에서도 거의 모든 얼굴을 한 사람으로 묶어, 앱은 평균 연결
+(`AverageLinkageClusterer`, 0.45)을 쓴다. LFW에서 평균 연결은 0.45 정밀도 1.000·재현율 0.513, 0.5 1.000·0.861,
+0.55 0.999·0.980이다. `vision_set.py`는 같은 LFW 사진을 기기 테스트(`PeopleVisionAccuracyTests`)용으로 옮긴다.

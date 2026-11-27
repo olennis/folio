@@ -1,7 +1,7 @@
 import XCTest
 @testable import PhotoAlbum
 
-/// 실제 얼굴(LFW 10명 × 20장 + 낯선 얼굴 50명)로 묶기 정밀도·재현율을 잰다.
+/// 실제 얼굴(LFW 10명 × 20장 + 낯선 얼굴 50명)로 묶기 정밀도·재현율을 잰다. Chinese Whispers는 비교용.
 /// 임베딩은 tools/model-conversion/cluster_set.py가 변환한 Core ML 모델로 만들었다.
 final class PeopleClusterAccuracyTests: XCTestCase {
     private struct Face: Decodable {
@@ -33,6 +33,15 @@ final class PeopleClusterAccuracyTests: XCTestCase {
             default:
                 break
             }
+        }
+        // 앱이 쓰는 평균 연결. LFW는 같은 사람 사진도 조명·나이가 제각각이라 0.45에서는 한 사람이 둘쯤으로 나뉜다
+        // (재현율 0.5). 실제 보관함에서 닮은 가족이 섞이지 않게 정밀도를 우선한 값이다.
+        for threshold: Float in [0.45, 0.5, 0.55] {
+            let labels = AverageLinkageClusterer(threshold: threshold).cluster(vectors)
+            let m = ClusterMetrics.pairwise(predicted: labels, truth: truth)
+            lines.append(String(format: "평균 연결 %.2f: 정밀도 %.3f, 재현율 %.3f", threshold, m.precision, m.recall))
+            XCTAssertGreaterThan(m.precision, 0.99)
+            if threshold == AverageLinkageClusterer().threshold { XCTAssertGreaterThan(m.recall, 0.45) }
         }
         print("인물 묶기 정확도 (얼굴 \(faces.count)개)\n" + lines.joined(separator: "\n"))
     }

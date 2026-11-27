@@ -113,7 +113,7 @@ final class PeopleIndexer: NSObject, ObservableObject {
     private var task: Task<Void, Never>?
     private var source: any FacePhotoSource = PhotoKitFaceSource()
     private var pipeline: FacePipeline?
-    var clusterer = ChineseWhispersClusterer()
+    var clusterer = AverageLinkageClusterer()
     /// 사람에 안 붙은 얼굴이 이만큼 쌓이면 전체를 다시 묶는다.
     var reclusterEvery = 150
     /// 도는 동안 사진이 바뀌었으면 끝난 뒤 한 번 더 본다.
@@ -272,7 +272,7 @@ final class PeopleIndexer: NSObject, ObservableObject {
         store: FaceStore,
         source: any FacePhotoSource,
         pipeline: FacePipeline,
-        clusterer: ChineseWhispersClusterer,
+        clusterer: AverageLinkageClusterer,
         reclusterEvery: Int,
         allowNetwork: Bool,
         batch: Int = 20,

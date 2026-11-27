@@ -23,9 +23,12 @@ struct VisionFaceDetector: FaceDetecting {
     static let minimumCaptureQuality: Float = 0.25
     /// 얼굴 상자의 짧은 변이 이보다 작으면 뺀다(픽셀).
     static let minimumFaceSide: CGFloat = 60
+    /// 고개를 이보다 많이 돌린 얼굴(라디안, 약 30도)은 뺀다. dlib 모델은 정면 얼굴로 배워 옆얼굴끼리 서로 가깝게 나온다.
+    static let maximumYaw: Double = 0.52
 
     var minimumQuality = Self.minimumCaptureQuality
     var minimumSide = Self.minimumFaceSide
+    var maximumYaw = Self.maximumYaw
 
     func detect(in image: CGImage) throws -> [DetectedFace] {
         let width = CGFloat(image.width), height = CGFloat(image.height)
@@ -53,7 +56,7 @@ struct VisionFaceDetector: FaceDetecting {
         let qualities = (quality.results ?? []).map { ($0.boundingBox, $0.faceCaptureQuality ?? 0) }
         return marked.compactMap { face in
             let score = qualities.max { Self.overlap($0.0, face.boundingBox) < Self.overlap($1.0, face.boundingBox) }?.1 ?? 0
-            guard score >= minimumQuality, let points = face.landmarks.flatMap({ Self.dlibPoints($0, width: width, height: height) })
+            guard score >= minimumQuality, abs(face.yaw?.doubleValue ?? 0) <= maximumYaw, let points = face.landmarks.flatMap({ Self.dlibPoints($0, width: width, height: height) })
             else { return nil }
             let box = face.boundingBox
             return DetectedFace(

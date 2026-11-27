@@ -28,7 +28,7 @@ final class PeopleVisionAccuracyTests: XCTestCase {
         let manifest = try XCTUnwrap(bundle.url(forResource: "vision-set", withExtension: "json"))
         let items = try JSONDecoder().decode([Item].self, from: Data(contentsOf: manifest))
         // 품질 바닥은 따로 재려고 0으로 두고, 크기 바닥(60px)은 앱과 같게 둔다.
-        let detector = VisionFaceDetector(minimumQuality: 0)
+        let detector = VisionFaceDetector(minimumQuality: 0, maximumYaw: .pi)
         let aligner = DlibFaceAligner()
         let embedder = try CoreMLFaceEmbedder()
 
@@ -81,8 +81,8 @@ final class PeopleVisionAccuracyTests: XCTestCase {
         let truth = samples.map(\.person)
         func measure(_ title: String, _ vectors: [[Float]], _ truth: [Int]) -> [Float: (precision: Double, recall: Double)] {
             var results: [Float: (precision: Double, recall: Double)] = [:]
-            for threshold: Float in [0.45, 0.5, 0.55, 0.6] {
-                let labels = ChineseWhispersClusterer(threshold: threshold).cluster(vectors)
+            for threshold: Float in [0.45, 0.5, 0.55] {
+                let labels = AverageLinkageClusterer(threshold: threshold).cluster(vectors)
                 let m = ClusterMetrics.pairwise(predicted: labels, truth: truth)
                 results[threshold] = m
                 lines.append(String(format: "%@ 임계값 %.2f: 정밀도 %.3f, 재현율 %.3f", title, threshold, m.precision, m.recall))
@@ -94,16 +94,17 @@ final class PeopleVisionAccuracyTests: XCTestCase {
         _ = measure("dlib 점", withDlib.compactMap(\.dlib), withDlib.map(\.person))
         for floor: Float in [0.25, 0.4] {
             let kept = samples.filter { $0.quality >= floor }
-            let labels = ChineseWhispersClusterer().cluster(kept.map(\.vision))
+            let labels = AverageLinkageClusterer().cluster(kept.map(\.vision))
             let m = ClusterMetrics.pairwise(predicted: labels, truth: kept.map(\.person))
             lines.append(String(format: "품질 %.2f 이상만(%d장): 정밀도 %.3f, 재현율 %.3f", floor, kept.count, m.precision, m.recall))
         }
         print("인물 묶기 정확도(Vision 경로)\n" + lines.joined(separator: "\n"))
 
         XCTAssertLessThan(missed, items.count / 20, "Vision이 얼굴을 너무 많이 놓친다")
-        let current = try XCTUnwrap(vision[ChineseWhispersClusterer().threshold])
-        XCTAssertGreaterThan(current.precision, 0.95)
-        XCTAssertGreaterThan(current.recall, 0.9)
+        // 정밀도 우선(PeopleClusterAccuracyTests 참고). LFW에서는 한 사람이 둘쯤으로 나뉜다.
+        let current = try XCTUnwrap(vision[AverageLinkageClusterer().threshold])
+        XCTAssertGreaterThan(current.precision, 0.98)
+        XCTAssertGreaterThan(current.recall, 0.4)
         #endif
     }
 }

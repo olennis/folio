@@ -119,16 +119,15 @@ actor FaceStore {
     /// 사진 한 장에서 찾은 얼굴을 넣는다. 얼굴이 없어도 "본 사진"으로 기록한다.
     /// 넣은 얼굴은 바로 가장 가까운 사람에게 붙인다(증분). 붙일 사람이 없으면 다음 재묶음까지 기다린다.
     @discardableResult
-    func add(assetID: String, faces: [(box: CGRect, embedding: [Float], quality: Float)], clusterer: ChineseWhispersClusterer) -> Int {
-        let centroids = personCentroids()
+    func add(assetID: String, faces: [(box: CGRect, embedding: [Float], quality: Float)], clusterer: AverageLinkageClusterer) -> Int {
+        let people = personSamples()
         var assigned = 0
         for item in faces {
             let face = Face(assetLocalIdentifier: assetID, box: item.box, embedding: item.embedding, quality: item.quality)
             modelContext.insert(face)
-            if let id = clusterer.nearest(item.embedding, among: centroids), let person = person(id) {
+            if let id = clusterer.nearest(item.embedding, among: people), let person = person(id) {
                 face.person = person
                 assigned += 1
-                centroidCache[id] = nil
             }
         }
         modelContext.insert(IndexedAsset(assetLocalIdentifier: assetID, faceCount: faces.count))
@@ -149,23 +148,26 @@ actor FaceStore {
         // 지운 얼굴이 사람의 faces에서 빠지는 것은 저장할 때라 먼저 저장한다.
         save()
         dropEmptyPeople()
-        centroidCache = [:]
+        sampleCache = [:]
         save()
     }
 
     // MARK: 묶기
 
-    /// 사람마다의 중심. 증분으로 붙일 때 쓴다.
-    private var centroidCache: [UUID: [Float]] = [:]
+    /// 사람마다 비교에 쓸 얼굴(최대 `sampleLimit`장, 고르게 뽑음). 증분으로 붙일 때 쓴다.
+    private var sampleCache: [UUID: [[Float]]] = [:]
+    private static let sampleLimit = 60
 
-    private func personCentroids() -> [(id: UUID, centroid: [Float])] {
+    private func personSamples() -> [(id: UUID, members: [[Float]])] {
         let people = (try? modelContext.fetch(FetchDescriptor<Person>())) ?? []
         return people.compactMap { person in
-            if let cached = centroidCache[person.id] { return (person.id, cached) }
-            guard !person.faces.isEmpty else { return nil }
-            let centroid = FaceVector.mean(person.faces.map(\.vector))
-            centroidCache[person.id] = centroid
-            return (person.id, centroid)
+            if let cached = sampleCache[person.id] { return (person.id, cached) }
+            let faces = person.faces
+            guard !faces.isEmpty else { return nil }
+            let step = max(1, faces.count / Self.sampleLimit)
+            let sample = stride(from: 0, to: faces.count, by: step).prefix(Self.sampleLimit).map { faces[$0].vector }
+            sampleCache[person.id] = sample
+            return (person.id, sample)
         }
     }
 
@@ -181,8 +183,9 @@ actor FaceStore {
 
     /// 모든 얼굴을 처음부터 다시 묶는다. 확정한 사람의 얼굴은 고정점으로 두고, 다른 묶음은 겹치는 얼굴이
     /// 가장 많은 기존 사람을 이어받아 이름·숨김을 지킨다. `minimumFaces`보다 작은 묶음은 사람으로 만들지 않는다.
-    func recluster(using clusterer: ChineseWhispersClusterer, minimumFaces: Int = 2) {
-        let faces = (try? modelContext.fetch(FetchDescriptor<Face>(sortBy: [SortDescriptor(\.createdAt)]))) ?? []
+    func recluster(using clusterer: AverageLinkageClusterer, minimumFaces: Int = 2) {
+        // 품질 좋은 얼굴부터 넘긴다. 얼굴이 아주 많으면 앞쪽만 거리 표로 묶기 때문이다.
+        let faces = (try? modelContext.fetch(FetchDescriptor<Face>(sortBy: [SortDescriptor(\.quality, order: .reverse), SortDescriptor(\.createdAt)]))) ?? []
         guard !faces.isEmpty else { return }
         let people = (try? modelContext.fetch(FetchDescriptor<Person>())) ?? []
 
@@ -228,7 +231,7 @@ actor FaceStore {
         }
         dropEmptyPeople()
         refreshRepresentatives()
-        centroidCache = [:]
+        sampleCache = [:]
         save()
     }
 
@@ -267,7 +270,7 @@ actor FaceStore {
         target.isHidden = target.isHidden && source.isHidden
         target.isConfirmed = true
         modelContext.delete(source)
-        centroidCache = [:]
+        sampleCache = [:]
         save()
     }
 
@@ -285,7 +288,7 @@ actor FaceStore {
         }
         dropEmptyPeople()
         refreshRepresentatives()
-        centroidCache = [:]
+        sampleCache = [:]
         save()
     }
 

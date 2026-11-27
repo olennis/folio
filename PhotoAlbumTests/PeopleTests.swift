@@ -16,34 +16,61 @@ final class PeopleTests: XCTestCase {
 
     // MARK: 묶기
 
-    func testChineseWhispersSeparatesPeople() {
+    func testAverageLinkageSeparatesPeople() {
         var vectors: [[Float]] = [], truth: [Int] = []
         for person in 0..<5 {
             for j in 0..<8 { vectors.append(Self.embedding(person: person, jitter: j)); truth.append(person) }
         }
-        let labels = ChineseWhispersClusterer().cluster(vectors)
+        let labels = AverageLinkageClusterer().cluster(vectors)
         let metrics = ClusterMetrics.pairwise(predicted: labels, truth: truth)
         XCTAssertEqual(metrics.precision, 1)
         XCTAssertEqual(metrics.recall, 1)
         // 같은 입력이면 같은 결과.
-        XCTAssertEqual(labels, ChineseWhispersClusterer().cluster(vectors))
+        XCTAssertEqual(labels, AverageLinkageClusterer().cluster(vectors))
     }
 
     func testAnchorsKeepLabelsAndForbiddenLabelIsNeverTaken() {
         let vectors = (0..<6).map { Self.embedding(person: 0, jitter: $0) }
         // 0번은 사람 7로 고정, 5번은 사람 7이 될 수 없다.
-        let labels = ChineseWhispersClusterer().cluster(vectors, anchors: [0: 7], forbidden: [5: [7]])
+        let labels = AverageLinkageClusterer().cluster(vectors, anchors: [0: 7], forbidden: [5: [7]])
         XCTAssertEqual(labels[0], 7)
         XCTAssertEqual(labels[1], 7, "고정점 주변의 같은 사람은 그 사람을 따른다")
         XCTAssertNotEqual(labels[5], 7, "'이 사람 아님'으로 뺀 얼굴은 그 사람이 되지 않는다")
+    }
+
+    /// 두 사람 사이에 닮은 얼굴 몇 장이 다리를 놓아도 합치지 않는다.
+    func testBridgeFacesDoNotChainTwoPeople() {
+        let a = (0..<10).map { Self.embedding(person: 0, jitter: $0) }
+        let b = (0..<10).map { Self.embedding(person: 1, jitter: $0) }
+        // a와 b 가운데를 잇는 얼굴 다섯 장. 이웃끼리는 0.3 안이다.
+        let bridge = (1...5).map { step -> [Float] in
+            let t = Float(step) / 6
+            return zip(a[0], b[0]).map { $0 * (1 - t) + $1 * t }
+        }
+        let vectors = a + b + bridge
+        let average = AverageLinkageClusterer().cluster(vectors)
+        XCTAssertNotEqual(average[0], average[10], "평균 연결은 두 사람을 따로 둔다")
+    }
+
+    /// 얼굴이 많아 일부만 거리 표로 묶어도, 나머지는 같은 사람에게 붙는다.
+    func testFacesBeyondLinkageLimitJoinTheirPerson() {
+        var vectors: [[Float]] = [], truth: [Int] = []
+        for person in 0..<4 {
+            for j in 0..<15 { vectors.append(Self.embedding(person: person, jitter: j)); truth.append(person) }
+        }
+        // 앞 20장(사람 0·1)만 거리 표에 들어가고, 사람 2·3은 남은 얼굴끼리 다시 묶는다.
+        let ordered = AverageLinkageClusterer(linkageLimit: 20).cluster(vectors)
+        let metrics = ClusterMetrics.pairwise(predicted: ordered, truth: truth)
+        XCTAssertEqual(metrics.precision, 1)
+        XCTAssertEqual(metrics.recall, 1)
     }
 
     func testThresholdIsConfigurable() {
         let a = Self.embedding(person: 0, jitter: 0)
         var b = a
         b[1] += 0.5 // 거리 0.5
-        XCTAssertEqual(Set(ChineseWhispersClusterer(threshold: 0.6).cluster([a, b])).count, 1)
-        XCTAssertEqual(Set(ChineseWhispersClusterer(threshold: 0.4).cluster([a, b])).count, 2)
+        XCTAssertEqual(Set(AverageLinkageClusterer(threshold: 0.6).cluster([a, b])).count, 1)
+        XCTAssertEqual(Set(AverageLinkageClusterer(threshold: 0.4).cluster([a, b])).count, 2)
     }
 
     // MARK: 저장소
@@ -56,7 +83,7 @@ final class PeopleTests: XCTestCase {
     private func add(_ store: FaceStore, person: Int, count: Int, prefix: String) async {
         for j in 0..<count {
             await store.add(assetID: "\(prefix)-\(j)", faces: [(CGRect(x: 0.1, y: 0.1, width: 0.2, height: 0.2), Self.embedding(person: person, jitter: j), 0.5)],
-                            clusterer: ChineseWhispersClusterer())
+                            clusterer: AverageLinkageClusterer())
         }
         await store.save()
     }
@@ -73,7 +100,7 @@ final class PeopleTests: XCTestCase {
         await add(store, person: 0, count: 5, prefix: "a")
         await add(store, person: 1, count: 3, prefix: "b")
         await add(store, person: 2, count: 1, prefix: "c") // 한 장뿐이라 사람으로 만들지 않는다
-        await store.recluster(using: ChineseWhispersClusterer())
+        await store.recluster(using: AverageLinkageClusterer())
         var found = people(container)
         XCTAssertEqual(found.map(\.faces.count), [5, 3])
         XCTAssertEqual(found[0].assetIDs.count, 5)
@@ -92,12 +119,12 @@ final class PeopleTests: XCTestCase {
         let (store, container) = try makeStore()
         await add(store, person: 0, count: 4, prefix: "a")
         await add(store, person: 1, count: 4, prefix: "b")
-        await store.recluster(using: ChineseWhispersClusterer())
+        await store.recluster(using: AverageLinkageClusterer())
         var found = people(container)
         let first = found[0].id, second = found[1].id
 
         await store.rename(first, to: "  서윤  ")
-        await store.recluster(using: ChineseWhispersClusterer())
+        await store.recluster(using: AverageLinkageClusterer())
         found = people(container)
         XCTAssertEqual(found.first { $0.id == first }?.name, "서윤", "이름 붙인 사람은 다시 묶어도 그대로")
         XCTAssertTrue(found.first { $0.id == first }?.isConfirmed ?? false)
@@ -111,7 +138,7 @@ final class PeopleTests: XCTestCase {
         // 이 사람 아님: 뺀 얼굴은 다시 묶어도 그 사람에게 돌아오지 않는다.
         let wrong = Set(found[0].faces.prefix(2).map(\.id))
         await store.exclude(faceIDs: wrong, from: first)
-        await store.recluster(using: ChineseWhispersClusterer())
+        await store.recluster(using: AverageLinkageClusterer())
         found = people(container)
         let person = try XCTUnwrap(found.first { $0.id == first })
         XCTAssertTrue(person.faces.allSatisfy { !wrong.contains($0.id) })
@@ -122,7 +149,7 @@ final class PeopleTests: XCTestCase {
     func testHideAndRemoveDeletedPhotos() async throws {
         let (store, container) = try makeStore()
         await add(store, person: 0, count: 3, prefix: "a")
-        await store.recluster(using: ChineseWhispersClusterer())
+        await store.recluster(using: AverageLinkageClusterer())
         let id = try XCTUnwrap(people(container).first?.id)
         await store.setHidden(id, true)
         XCTAssertTrue(people(container).first?.isHidden ?? false)
@@ -172,7 +199,7 @@ final class PeopleTests: XCTestCase {
         let ids = (0..<30).map { "photo-\($0)" }
 
         // 첫 실행: 사진 30장, 사람 3명.
-        await PeopleIndexer.run(store: store, source: FakeSource(ids: ids), pipeline: pipeline, clusterer: ChineseWhispersClusterer(),
+        await PeopleIndexer.run(store: store, source: FakeSource(ids: ids), pipeline: pipeline, clusterer: AverageLinkageClusterer(),
                                 reclusterEvery: 10, allowNetwork: false) { _, _ in }
         var indexed = await store.indexedAssetIDs()
         XCTAssertEqual(indexed.count, 30)
@@ -181,7 +208,7 @@ final class PeopleTests: XCTestCase {
 
         // 다시 돌리면 볼 사진이 없다(진행 0/0).
         let seen = ProgressBox()
-        await PeopleIndexer.run(store: store, source: FakeSource(ids: ids), pipeline: pipeline, clusterer: ChineseWhispersClusterer(),
+        await PeopleIndexer.run(store: store, source: FakeSource(ids: ids), pipeline: pipeline, clusterer: AverageLinkageClusterer(),
                                 reclusterEvery: 10, allowNetwork: false) { done, total in await seen.record(done, total) }
         let first = await seen.values.first
         XCTAssertEqual(first?.1, 0)
@@ -189,7 +216,7 @@ final class PeopleTests: XCTestCase {
         // 사진 3장이 지워지고 2장이 늘면 그만큼만 바뀐다.
         let changed = Array(ids.dropFirst(3)) + ["photo-new-0", "photo-new-1"]
         let seen2 = ProgressBox()
-        await PeopleIndexer.run(store: store, source: FakeSource(ids: changed), pipeline: pipeline, clusterer: ChineseWhispersClusterer(),
+        await PeopleIndexer.run(store: store, source: FakeSource(ids: changed), pipeline: pipeline, clusterer: AverageLinkageClusterer(),
                                 reclusterEvery: 10, allowNetwork: false) { done, total in await seen2.record(done, total) }
         let total = await seen2.values.first?.1
         XCTAssertEqual(total, 2, "새 사진 2장만 본다")
@@ -202,7 +229,7 @@ final class PeopleTests: XCTestCase {
         let pipeline = FacePipeline(detector: FakeDetector(), aligner: FakeAligner(), embedder: FakeEmbedder())
         let ids = (0..<60).map { "photo-\($0)" }
         let task = Task {
-            await PeopleIndexer.run(store: store, source: FakeSource(ids: ids), pipeline: pipeline, clusterer: ChineseWhispersClusterer(),
+            await PeopleIndexer.run(store: store, source: FakeSource(ids: ids), pipeline: pipeline, clusterer: AverageLinkageClusterer(),
                                     reclusterEvery: 1000, allowNetwork: false, batch: 10) { done, _ in
                 if done >= 20 { withUnsafeCurrentTask { $0?.cancel() } }
             }
@@ -213,7 +240,7 @@ final class PeopleTests: XCTestCase {
         XCTAssertLessThan(partial, 60, "멈춘 곳까지만 기록한다")
 
         let seen = ProgressBox()
-        await PeopleIndexer.run(store: store, source: FakeSource(ids: ids), pipeline: pipeline, clusterer: ChineseWhispersClusterer(),
+        await PeopleIndexer.run(store: store, source: FakeSource(ids: ids), pipeline: pipeline, clusterer: AverageLinkageClusterer(),
                                 reclusterEvery: 1000, allowNetwork: false) { done, total in await seen.record(done, total) }
         let total = await seen.values.first?.1
         XCTAssertEqual(total, 60 - partial, "남은 사진만 이어서 본다")
@@ -241,18 +268,18 @@ final class PeopleTests: XCTestCase {
         let ids = (0..<10).map { "photo-\($0)" }
 
         await PeopleIndexer.run(store: store, source: FlakySource(ids: ids, missing: ["photo-1", "photo-2"]), pipeline: good,
-                                clusterer: ChineseWhispersClusterer(), reclusterEvery: 10, allowNetwork: false) { _, _ in }
+                                clusterer: AverageLinkageClusterer(), reclusterEvery: 10, allowNetwork: false) { _, _ in }
         var indexed = await store.indexedAssetIDs()
         XCTAssertEqual(indexed, Set(ids).subtracting(["photo-1", "photo-2"]), "못 불러온 사진은 본 사진으로 남기지 않는다")
 
         let broken = FacePipeline(detector: FakeDetector(), aligner: FakeAligner(), embedder: BrokenEmbedder())
         await PeopleIndexer.run(store: store, source: FakeSource(ids: ids), pipeline: broken,
-                                clusterer: ChineseWhispersClusterer(), reclusterEvery: 10, allowNetwork: false) { _, _ in }
+                                clusterer: AverageLinkageClusterer(), reclusterEvery: 10, allowNetwork: false) { _, _ in }
         indexed = await store.indexedAssetIDs()
         XCTAssertEqual(indexed.count, 8, "분석이 실패한 사진도 남기지 않는다")
 
         await PeopleIndexer.run(store: store, source: FakeSource(ids: ids), pipeline: good,
-                                clusterer: ChineseWhispersClusterer(), reclusterEvery: 10, allowNetwork: false) { _, _ in }
+                                clusterer: AverageLinkageClusterer(), reclusterEvery: 10, allowNetwork: false) { _, _ in }
         indexed = await store.indexedAssetIDs()
         XCTAssertEqual(indexed, Set(ids))
     }

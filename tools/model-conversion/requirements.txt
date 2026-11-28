@@ -1,0 +1,6 @@
+# Python 3.11에서 확인했다. dlib은 소스에서 빌드한다(cmake, Homebrew libpng 필요).
+tensorflow==2.15.1
+coremltools==8.1
+numpy<2
+pillow
+dlib==19.24.6

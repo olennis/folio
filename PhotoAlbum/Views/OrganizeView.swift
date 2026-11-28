@@ -68,6 +68,7 @@ struct OrganizeView: View {
                 } else if items.isEmpty {
                     ScrollView {
                         AutoClassifySection()
+                        PeopleSection()
                         scopePicker
                         if showsAll {
                             ContentUnavailableView("사진이 없습니다", systemImage: "photo")
@@ -153,6 +154,7 @@ struct OrganizeView: View {
         // 스크롤 뷰가 원래 내용을 쌓던 기본 간격 그대로.
         VStack {
             AutoClassifySection()
+            PeopleSection()
             scopePicker
             Text(showsAll
                  ? "사진 \(items.count.formatted())장 · 앨범에 든 사진도 다른 앨범에 넣을 수 있어요"
@@ -406,33 +408,76 @@ private final class GridGeometry {
 
 /// 고른 사진들을 넣을 앨범을 여러 개 고른다.
 struct AddToAlbumsSheet: View {
-    @Environment(\.modelContext) private var context
     @Environment(\.dismiss) private var dismiss
+    let assetIDs: [String]
+    var preselected: Set<UUID> = []
+    /// 넣은 앨범 수(건너뛰면 0).
+    var onDone: (Int) -> Void = { _ in }
+
+    init(assetIDs: [String], preselected: Set<UUID> = [], onDone: @escaping (Int) -> Void) {
+        self.assetIDs = assetIDs
+        self.preselected = preselected
+        self.onDone = onDone
+    }
+
+    init(assetIDs: [String], onDone: @escaping () -> Void) {
+        self.init(assetIDs: assetIDs) { count in if count > 0 { onDone() } }
+    }
+
+    var body: some View {
+        NavigationStack {
+            AddToAlbumsForm(assetIDs: assetIDs, preselected: preselected) { count in
+                dismiss()
+                onDone(count)
+            }
+        }
+        .presentationDetents([.medium, .large])
+    }
+}
+
+/// 앨범 고르기 화면 몸통. 다른 시트 안에서 다음 단계로 밀어 넣을 수도 있다(인물 합치기 뒤).
+/// 닫기는 부르는 쪽이 `onDone`에서 한다.
+struct AddToAlbumsForm: View {
+    @Environment(\.modelContext) private var context
     @Query private var albums: [Album]
 
     let assetIDs: [String]
-    let onDone: () -> Void
+    var preselected: Set<UUID> = []
+    var title = "앨범에 넣기"
+    var cancelTitle = "취소"
+    /// 넣었으면 몇 개 앨범에 넣었는지, 건너뛰었으면 0.
+    let onDone: (Int) -> Void
 
     @State private var selected: Set<UUID> = []
     @State private var signatures: [PhotoSignature] = []
 
+    init(assetIDs: [String], preselected: Set<UUID> = [], title: String = "앨범에 넣기", cancelTitle: String = "취소", onDone: @escaping (Int) -> Void) {
+        self.assetIDs = assetIDs
+        self.preselected = preselected
+        self.title = title
+        self.cancelTitle = cancelTitle
+        self.onDone = onDone
+        _selected = State(initialValue: preselected)
+    }
+
     var body: some View {
-        NavigationStack {
-            AlbumChoiceList(
-                selected: $selected,
-                signatures: signatures,
-                footer: "사진 \(assetIDs.count)장 · 한 사진을 여러 앨범에 넣을 수 있어요"
-            )
-            .navigationTitle("앨범에 넣기")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("취소") { dismiss() } }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("완료", action: add).disabled(selected.isEmpty)
-                }
+        AlbumChoiceList(
+            selected: $selected,
+            signatures: signatures,
+            footer: "사진 \(assetIDs.count)장 · 한 사진을 여러 앨범에 넣을 수 있어요. 이미 들어 있는 사진은 건너뛰어요."
+        )
+        .navigationTitle(title)
+        .navigationBarTitleDisplayMode(.inline)
+        .navigationBarBackButtonHidden()
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) {
+                Button(cancelTitle) { onDone(0) }
+                .accessibilityIdentifier("albums-skip")
+            }
+            ToolbarItem(placement: .confirmationAction) {
+                Button("완료", action: add).disabled(selected.isEmpty).accessibilityIdentifier("albums-done")
             }
         }
-        .presentationDetents([.medium, .large])
         // 추천은 고른 사진 앞쪽 일부만 보고 정한다.
         .task { signatures = PhotoLibrary.signatures(for: Array(assetIDs.prefix(60))) }
     }
@@ -441,13 +486,13 @@ struct AddToAlbumsSheet: View {
         let store = AlbumStore(context: context)
         let dates = PhotoLibrary.creationDates(for: assetIDs)
         let assets = assetIDs.map { (id: $0, takenAt: dates[$0]) }
-        for album in albums where selected.contains(album.id) {
+        let targets = albums.filter { selected.contains($0.id) }
+        for album in targets {
             store.add(assets, to: album)
         }
         let context = context
         Task { await PhotoMetadata.refresh(context: context) }
-        dismiss()
-        onDone()
+        onDone(targets.count)
     }
 }
 

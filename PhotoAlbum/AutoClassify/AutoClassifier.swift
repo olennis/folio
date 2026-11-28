@@ -49,6 +49,14 @@ enum SceneCategory: String, CaseIterable, Codable, Sendable {
     }
 }
 
+/// 자동 분류가 보는 사람 한 명의 요약(얼굴로 찾은 사람).
+struct PersonSnapshot: Sendable, Equatable {
+    let id: UUID
+    let name: String?
+    let isHidden: Bool
+    let assetIDs: [String]
+}
+
 /// 자동 분류가 보는 앨범 한 개의 요약. 모델 객체 대신 값으로 넘겨 백그라운드에서 쓴다.
 struct AlbumSnapshot: Sendable, Equatable {
     let id: UUID
@@ -78,6 +86,7 @@ struct AutoSuggestion: Identifiable, Sendable, Equatable {
         case year(Int)
         case trip(start: Date, end: Date)
         case scene(SceneCategory)
+        case person(UUID)
     }
 
     /// 같은 묶음이면 다시 계산해도 같은 값. 숨긴 제안을 기억하는 데 쓴다.
@@ -98,6 +107,7 @@ struct AutoSuggestion: Identifiable, Sendable, Equatable {
         case .year: "calendar"
         case .trip: "airplane"
         case .scene(let scene): scene.symbol
+        case .person: "person.crop.circle"
         }
     }
 }
@@ -109,6 +119,8 @@ enum AutoClassifier {
         var yearMinimum = 10
         var tripMinimum = 12
         var sceneMinimum = 8
+        /// 새 인물 앨범을 제안할 최소 사진 수.
+        var personMinimum = 10
         /// 이보다 오래 사진이 끊기면 다른 묶음으로 본다.
         var tripGap: TimeInterval = 48 * 3600
         var tripMaxDays = 30.0
@@ -121,6 +133,7 @@ enum AutoClassifier {
     static func suggestions(
         photos: [LibraryPhoto],
         albums: [AlbumSnapshot],
+        people: [PersonSnapshot] = [],
         dismissed: Set<String> = [],
         thresholds: Thresholds = Thresholds(),
         calendar: Calendar = .current
@@ -129,6 +142,7 @@ enum AutoClassifier {
         let all = trips(dated, albums: albums, thresholds: thresholds, calendar: calendar)
             + years(dated, albums: albums, thresholds: thresholds, calendar: calendar)
             + scenes(dated, albums: albums, thresholds: thresholds)
+            + Self.people(people, photos: photos, albums: albums, thresholds: thresholds)
         return all.filter { !dismissed.contains($0.id) }
     }
 
@@ -266,6 +280,32 @@ enum AutoClassifier {
     static func monthTitle(_ date: Date, calendar: Calendar) -> String {
         let parts = calendar.dateComponents([.year, .month], from: date)
         return "\(parts.year ?? 0)년 \(parts.month ?? 0)월"
+    }
+
+    // MARK: 인물
+
+    /// 같은 사람이 나온 사진을 인물 앨범으로. 이름을 붙인 사람은 같은 이름의 인물 앨범이 있으면 거기에 채운다.
+    /// 숨긴 사람은 제안하지 않는다. 사진 순서는 찍은 순서.
+    static func people(_ people: [PersonSnapshot], photos: [LibraryPhoto], albums: [AlbumSnapshot], thresholds: Thresholds) -> [AutoSuggestion] {
+        let taken = Dictionary(photos.map { ($0.id, $0.takenAt ?? .distantPast) }, uniquingKeysWith: { a, _ in a })
+        return people.filter { !$0.isHidden }.compactMap { person in
+            let target = person.name.flatMap { name in albums.first { $0.kind == .person && $0.title == name } }
+            let missing = person.assetIDs
+                .filter { !(target?.assetIDs.contains($0) ?? false) }
+                .sorted { (taken[$0] ?? .distantPast) < (taken[$1] ?? .distantPast) }
+            let enough = target == nil ? missing.count >= thresholds.personMinimum : !missing.isEmpty
+            guard enough else { return nil }
+            return AutoSuggestion(
+                id: "person-\(person.id.uuidString)",
+                source: .person(person.id),
+                title: target?.title ?? person.name ?? "이름 없는 인물",
+                assetIDs: missing,
+                targetAlbumID: target?.id,
+                newKind: .person,
+                center: nil
+            )
+        }
+        .sorted { $0.assetIDs.count > $1.assetIDs.count }
     }
 
     // MARK: 장면

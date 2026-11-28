@@ -56,6 +56,30 @@ Xcode에서 결제를 눌러 보려면: Product → Scheme → Edit Scheme → R
 - 개인정보: 장면 분석은 기기 안에서만 하고, 결과는 앱 지원 폴더의 `scene-index.json`에만 둔다. 개인정보 처리방침에 적는다.
   여행 이름의 지명은 여행 가운데 좌표 한 점을 Apple 지도 서비스로 보내 받는다(사진 지명과 같은 방식).
 
+### A-4. 인물(얼굴로 같은 사람 찾기) — 실기기에서 확인할 것
+
+Pro 기능이다. 처음 켤 때 동의 화면을 띄우고, 인물 설정에서 끄면 얼굴 데이터(`people.store`)를 모두 지운다.
+모델은 dlib `dlib_face_recognition_resnet_model_v1`(퍼블릭 도메인)을 Core ML로 옮긴 것이다(`tools/model-conversion/README.md`).
+
+- [x] **Vision 랜드마크 정확도**(iPhone 15 Pro): LFW 250장을 앱 경로(Vision → 정렬 → Core ML)로 돌리면 놓친 얼굴 0장,
+  점 오차 중앙값 0.044(눈 거리 대비), dlib 점으로 정렬한 칩과의 임베딩 거리 중앙값 0.14. 묶기 결과는 dlib 점과 거의 같다
+  (`PeopleVisionAccuracyTests`, 기기 전용).
+- [x] **묶기 방식·임계값**: 평균 연결 0.45(`AverageLinkageClusterer`). 명세의 Chinese Whispers는 실제 보관함(아이 둘·어른 둘)에서
+  얼굴 912개 중 909개를 한 사람으로 묶었다. dlib 모델에서 아이·가족 얼굴끼리 거리 중앙값이 0.45로 가까워 한 쌍만 가까워도 잇는
+  방식은 번진다. 평균 연결은 0.46까지 두 아이를 나누고 0.47부터 합쳐, 여유를 두어 0.45로 했다. 대가로 LFW 재현율은 0.51
+  (한 사람이 둘쯤으로 나뉨, 합치기로 고친다), 정밀도는 1.000.
+- [x] **옆얼굴 빼기**: 고개를 30도(0.52rad) 넘게 돌린 얼굴은 분석하지 않는다(`VisionFaceDetector.maximumYaw`). 1,000장에서 912 → 736개.
+- [x] **첫 인덱싱 시간·메모리**(iPhone 15 Pro, 최근 사진 1,000장): 97초(장당 0.097초), 최대 메모리 240MB(시작 134MB).
+  사진 불러오기 33초, 정렬 29초, 얼굴 찾기 12초, 임베딩 8초. 기준 기기 iPhone 13에서는 재지 못했다.
+  다시 재려면 DEBUG 빌드를 `-peopleBenchmark 1000`으로 켠다(`-peopleExport YES`면 얼굴 이미지·특징값도 Documents에 남긴다).
+- [x] **백그라운드 GPU**: 백그라운드에서는 iOS가 GPU를 막아 Core ML이 망가진 값을 오류 없이 돌려줬다. Neural Engine·CPU만 쓰고,
+  값이 이상하면 그 사진을 "본 사진"으로 남기지 않아 다음에 다시 본다.
+- [ ] **백그라운드 작업**: 충전 중 `BGProcessingTask`(`dev.dh.sajincheop.people-index`)로 이어 가는지.
+  Xcode 디버거에서 `e -l objc -- (void)[[BGTaskScheduler sharedScheduler] _simulateLaunchForTaskWithIdentifier:@"dev.dh.sajincheop.people-index"]`로 바로 띄워 볼 수 있다.
+- 개인정보: 얼굴 상자·임베딩(숫자 128개)·이름은 앱 지원 폴더의 `people.store`에만 둔다. 서버로 보내지 않는다.
+  사진 접근 권한 문구에 적었고, 개인정보 처리방침에도 적는다. 개인정보 라벨은 그대로 "데이터를 수집하지 않음".
+- 오픈소스 고지: 인물 설정 화면에 dlib 모델 출처(퍼블릭 도메인)를 적었다.
+
 ### B. 출시 전 보강
 
 - [ ] **최소 iOS 버전 정하기** (지금 iOS 17.0)

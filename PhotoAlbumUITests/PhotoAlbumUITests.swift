@@ -447,6 +447,101 @@ final class PhotoAlbumUITests: XCTestCase {
         XCTAssertTrue(app.navigationBars["1장 선택됨"].waitForExistence(timeout: 5))
     }
 
+    // MARK: 인물
+
+    private func openOrganize() {
+        app.tabBars.firstMatch.buttons["정리"].tap()
+        XCTAssertTrue(app.navigationBars["정리"].waitForExistence(timeout: 10))
+    }
+
+    func testFreeUserSeesLockedPeopleAndPaywall() {
+        relaunch(["-forcePro", "NO"])
+        openOrganize()
+        let locked = app.buttons["locked-people"]
+        XCTAssertTrue(locked.waitForExistence(timeout: 10), "무료는 인물이 잠겨 있다")
+        locked.tap()
+        XCTAssertTrue(app.staticTexts["paywall-headline"].waitForExistence(timeout: 5))
+    }
+
+    func testProUserTurnsOnPeopleAfterConsent() {
+        relaunch(["-forcePro", "YES", "-peopleReset", "YES"])
+        openOrganize()
+        let enable = app.buttons["people-enable"]
+        XCTAssertTrue(enable.waitForExistence(timeout: 10), "켜기 전에는 켜는 카드가 보인다")
+        enable.tap()
+        let agree = app.buttons["people-consent"]
+        XCTAssertTrue(agree.waitForExistence(timeout: 5), "처음 켤 때 동의 화면을 띄운다")
+        XCTAssertTrue(app.staticTexts["기기 안에서만 분석해요"].exists)
+        shot("24-people-consent")
+        agree.tap()
+        XCTAssertTrue(enable.waitForNonExistence(timeout: 5), "동의하면 켜진다")
+    }
+
+    func testPeopleCanBeNamedCorrectedAndMerged() {
+        relaunch(["-forcePro", "YES", "-peopleDemo", "YES", "-people.enabled", "YES"])
+        openOrganize()
+        let chips = app.buttons.matching(identifier: "person-chip")
+        XCTAssertTrue(chips.firstMatch.waitForExistence(timeout: 15), "찾은 사람이 정리 탭에 보인다")
+        XCTAssertEqual(chips.count, 2)
+        shot("25-people-section")
+
+        // 사진이 많은 사람(6장)을 열어 이름을 붙인다.
+        chips.element(boundBy: 0).tap()
+        let photos = app.buttons.matching(identifier: "person-photo")
+        XCTAssertTrue(photos.firstMatch.waitForExistence(timeout: 10))
+        XCTAssertEqual(photos.count, 6)
+        app.buttons["person-menu"].tap()
+        app.buttons["이름 지정"].tap()
+        let field = app.alerts.textFields.firstMatch
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        field.typeText("서윤")
+        app.alerts.buttons["저장"].tap()
+        XCTAssertTrue(app.navigationBars["서윤"].waitForExistence(timeout: 5), "이름이 붙는다")
+
+        // 두 장을 골라 "이 사람 아님"으로 뺀다.
+        app.buttons["person-select"].tap()
+        photos.element(boundBy: 0).tap()
+        photos.element(boundBy: 1).tap()
+        shot("26-person-detail")
+        app.buttons["person-not-this"].tap()
+        let fewer = NSPredicate(format: "count == 4")
+        expectation(for: fewer, evaluatedWith: photos)
+        waitForExpectations(timeout: 5)
+
+        // 인물 전체에서 다른 사람을 서윤에게 합친다.
+        app.navigationBars.buttons.firstMatch.tap()
+        app.buttons["people-all"].tap()
+        let cells = app.buttons.matching(identifier: "person-cell")
+        XCTAssertTrue(cells.firstMatch.waitForExistence(timeout: 5))
+        XCTAssertEqual(cells.count, 2)
+        shot("27-people-list")
+        // 선택 모드에서 두 사람을 골라 한 번에 합친다.
+        app.buttons["people-select"].tap()
+        let merge = app.buttons["people-merge-selected"]
+        XCTAssertTrue(merge.waitForExistence(timeout: 5))
+        XCTAssertFalse(merge.isEnabled, "한 명 이하로는 합칠 수 없다")
+        cells.element(boundBy: 0).tap()
+        cells.element(boundBy: 1).tap()
+        XCTAssertTrue(merge.isEnabled)
+        shot("28-people-multiselect")
+        merge.tap()
+        let targets = app.buttons.matching(identifier: "merge-target")
+        XCTAssertTrue(targets.firstMatch.waitForExistence(timeout: 5))
+        XCTAssertEqual(targets.count, 2, "고른 두 사람 가운데 남길 사람을 고른다")
+        XCTAssertTrue(targets.firstMatch.label.contains("서윤"), "이름 있는 사람이 맨 위(추천)")
+        targets.firstMatch.tap()
+        app.buttons["합치기"].tap()
+        // 합친 뒤 같은 시트에서 기존 앨범에도 넣을지 묻는다.
+        XCTAssertTrue(app.navigationBars["앨범에도 넣을까요?"].waitForExistence(timeout: 5), "합친 뒤 앨범 고르기로 넘어간다")
+        XCTAssertTrue(app.buttons["새로운 앨범…"].exists)
+        shot("29-people-merge-albums")
+        app.buttons["albums-skip"].tap()
+        let one = NSPredicate(format: "count == 1")
+        expectation(for: one, evaluatedWith: cells)
+        waitForExpectations(timeout: 5)
+        XCTAssertTrue(app.staticTexts["서윤"].exists, "남긴 사람의 이름이 남는다")
+    }
+
     func testProUserHasNoAlbumLimit() {
         relaunch(["-forcePro", "YES"])
         let created = fillToFreeLimit()

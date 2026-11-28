@@ -29,7 +29,11 @@ struct RootView: View {
             .fullScreenCover(item: $resuming) { ViewerHost(album: $0.album, startID: $0.linkID) }
             // 앱을 떠나면 열어 둔 비밀 앨범을 모두 다시 잠근다.
             .onChange(of: scenePhase) { _, phase in
-                if phase == .background { SecretLock.shared.lockAll() }
+                if phase == .background {
+                    SecretLock.shared.lockAll()
+                    // 남은 얼굴 분석은 충전 중일 때 이어서 한다.
+                    PeopleIndexer.shared.scheduleBackgroundTask()
+                }
             }
     }
 

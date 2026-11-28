@@ -37,6 +37,7 @@ final class AutoClassifyModel: ObservableObject {
             value.yearMinimum = minimum
             value.tripMinimum = minimum
             value.sceneMinimum = minimum
+            value.personMinimum = minimum
         }
         #endif
         return value
@@ -48,8 +49,10 @@ final class AutoClassifyModel: ObservableObject {
         isRefreshing = true
         let dismissed = dismissed
         let thresholds = thresholds
+        // 인물은 켜 둔 Pro 사용자만. 얼굴 저장소는 앨범 저장소와 따로 있다.
+        let people = ProStore.shared.isPro && PeopleSettings.isEnabled ? PeopleIndexer.shared.container : nil
         refreshTask = Task {
-            let found = await Self.compute(container: container, dismissed: dismissed, thresholds: thresholds)
+            let found = await Self.compute(container: container, people: people, dismissed: dismissed, thresholds: thresholds)
             guard !Task.isCancelled else { return }
             // 카드는 바로 보여 주고, 여행 지명은 네트워크로 받아 오는 대로 고친다.
             suggestions = withKnownNames(found)
@@ -110,6 +113,10 @@ final class AutoClassifyModel: ObservableObject {
         let dates = PhotoLibrary.creationDates(for: assetIDs)
         store.add(assetIDs.map { (id: $0, takenAt: dates[$0]) }, to: album)
         suggestions.removeAll { $0.id == suggestion.id }
+        // 인물 앨범 이름은 그 사람의 이름이 된다. 다시 묶어도 이 사람으로 남는다.
+        if case .person(let id) = suggestion.source, suggestion.targetAlbumID == nil {
+            Task { await PeopleIndexer.shared.rename(id, to: title) }
+        }
         Task { await PhotoMetadata.refresh(context: context) }
         return album
     }
@@ -118,6 +125,7 @@ final class AutoClassifyModel: ObservableObject {
 
     nonisolated private static func compute(
         container: ModelContainer,
+        people peopleContainer: ModelContainer?,
         dismissed: Set<String>,
         thresholds: AutoClassifier.Thresholds
     ) async -> [AutoSuggestion] {
@@ -129,7 +137,8 @@ final class AutoClassifyModel: ObservableObject {
         let snapshot = photos
         return await Task.detached(priority: .userInitiated) {
             let albums = albumSnapshots(ModelContext(container))
-            return AutoClassifier.suggestions(photos: snapshot, albums: albums, dismissed: dismissed, thresholds: thresholds)
+            let people = peopleContainer.map { personSnapshots(ModelContext($0)) } ?? []
+            return AutoClassifier.suggestions(photos: snapshot, albums: albums, people: people, dismissed: dismissed, thresholds: thresholds)
         }.value
     }
 
@@ -148,6 +157,12 @@ final class AutoClassifyModel: ObservableObject {
             ))
         }
         return result
+    }
+
+    nonisolated private static func personSnapshots(_ context: ModelContext) -> [PersonSnapshot] {
+        ((try? context.fetch(FetchDescriptor<Person>())) ?? []).map {
+            PersonSnapshot(id: $0.id, name: $0.name, isHidden: $0.isHidden, assetIDs: $0.assetIDs)
+        }
     }
 
     nonisolated private static func albumSnapshots(_ context: ModelContext) -> [AlbumSnapshot] {
@@ -199,7 +214,7 @@ extension AutoSuggestion {
             let days = start.formatted(.dateTime.year().month().day())
             let last = end.formatted(.dateTime.month().day())
             return Calendar.current.isDate(start, inSameDayAs: end) ? "\(days) · \(count)" : "\(days)–\(last) · \(count)"
-        case .year, .scene:
+        case .year, .scene, .person:
             return targetAlbumID == nil ? "새 앨범 · \(count)" : "‘\(title)’에 빠진 \(count)"
         }
     }
@@ -209,6 +224,7 @@ extension AutoSuggestion {
         case .year: "같은 해에 찍은 사진"
         case .trip: "집에서 먼 곳에서 며칠 동안 찍은 사진"
         case .scene(let scene): "\(scene.albumTitle) 사진으로 보여요"
+        case .person: "같은 사람이 나온 사진"
         }
     }
 }

@@ -290,6 +290,7 @@ struct PersonDetailView: View {
     @State private var renaming: PersonSummary?
     @State private var naming = false
     @State private var merging: PersonSummary?
+    @State private var addingToAlbums = false
     @State private var notice: String?
 
     private let columns = Array(repeating: GridItem(.flexible(), spacing: 2), count: 3)
@@ -321,7 +322,12 @@ struct PersonDetailView: View {
         .fullScreenCover(item: Binding(get: { viewing.map(ViewingID.init) }, set: { viewing = $0?.id })) { item in
             OrganizePhotoViewer(items: person?.assetIDs ?? [], albumNames: [:], selected: .constant([]), currentID: item.id)
         }
-        .sheet(item: $merging) { MergePeopleSheet(source: $0) }
+        .sheet(item: $merging, onDismiss: reload) { MergePeopleSheet(source: $0) }
+        .sheet(isPresented: $addingToAlbums) {
+            AddToAlbumsSheet(assetIDs: person?.assetIDs ?? []) { count in
+                if count > 0 { notice = "사진 \(person?.photoCount ?? 0)장을 앨범 \(count)개에 넣었어요" }
+            }
+        }
         .modifier(RenamePersonAlert(person: $renaming))
         .modifier(RenamePersonAlert(person: Binding(get: { naming ? person : nil }, set: { if $0 == nil { naming = false } }),
                                     then: { name in makeAlbum(named: name) }))
@@ -391,6 +397,7 @@ struct PersonDetailView: View {
                     Button("앨범으로 만들기", systemImage: "rectangle.stack.badge.plus") {
                         if let name = person.name { makeAlbum(named: name) } else { naming = true }
                     }
+                    Button("기존 앨범에 넣기", systemImage: "rectangle.stack") { addingToAlbums = true }
                     Button("이름 지정", systemImage: "pencil") { renaming = person }
                     Button("다른 사람과 합치기", systemImage: "person.2") { merging = person }
                     Button(person.isHidden ? "숨김 해제" : "숨기기", systemImage: person.isHidden ? "eye" : "eye.slash") {
@@ -408,8 +415,8 @@ struct PersonDetailView: View {
         guard let container = indexer.container else { return }
         person = PeopleQuery.people(in: container, includeHidden: true, minimumPhotos: 0).first { $0.id == personID }
         faces = PeopleQuery.faces(of: personID, in: container)
-        // 합쳐져 사라진 사람이면 목록으로 돌아간다.
-        if person == nil { dismiss() }
+        // 합쳐져 사라진 사람이면 목록으로 돌아간다. 합치기 시트가 앨범 단계에 있으면 닫힌 뒤에.
+        if person == nil, merging == nil { dismiss() }
     }
 
     private func excludeSelected() {
@@ -467,9 +474,18 @@ struct MergePeopleSheet: View {
     var candidates: [PersonSummary]?
     var onMerged: () -> Void = {}
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.modelContext) private var albums
     @ObservedObject private var indexer = PeopleIndexer.shared
     @State private var people: [PersonSummary] = []
     @State private var target: PersonSummary?
+    /// 합친 뒤 앨범에 넣을 사진. 값이 생기면 앨범 고르기로 넘어간다.
+    @State private var merged: MergedPhotos?
+
+    struct MergedPhotos: Hashable {
+        let assetIDs: [String]
+        /// 합친 사람들 이름과 같은 인물 앨범(미리 골라 둔다).
+        let albums: Set<UUID>
+    }
 
     init(source: PersonSummary) {
         sources = [source]
@@ -522,11 +538,15 @@ struct MergePeopleSheet: View {
                     Task {
                         await indexer.merge(ids, into: target.id)
                         onMerged()
-                        dismiss()
+                        showAlbumStep(for: target)
                     }
                 }
             } message: {
                 Text("사진이 한 사람으로 모여요. 이 사람은 확인한 사람으로 고정돼요.")
+            }
+            .navigationDestination(item: $merged) { photos in
+                AddToAlbumsForm(assetIDs: photos.assetIDs, preselected: photos.albums,
+                                title: "앨범에도 넣을까요?", cancelTitle: "건너뛰기") { _ in dismiss() }
             }
         }
         .presentationDetents([.medium, .large])
@@ -542,6 +562,17 @@ struct MergePeopleSheet: View {
     }
 
     private var suggested: PersonSummary? { people.first }
+
+    /// 합친 사람의 사진을 기존 앨범에도 넣을 수 있게 다음 단계로 넘어간다.
+    private func showAlbumStep(for target: PersonSummary) {
+        guard let container = indexer.container,
+              let person = PeopleQuery.people(in: container, includeHidden: true, minimumPhotos: 0).first(where: { $0.id == target.id }),
+              !person.assetIDs.isEmpty
+        else { dismiss(); return }
+        let names = Set((sources + [target]).compactMap(\.name))
+        let matching = ((try? albums.fetch(FetchDescriptor<Album>())) ?? []).filter { $0.kind == .person && names.contains($0.title) }
+        merged = MergedPhotos(assetIDs: person.assetIDs, albums: Set(matching.map(\.id)))
+    }
 
     private var question: String {
         guard let target else { return "" }

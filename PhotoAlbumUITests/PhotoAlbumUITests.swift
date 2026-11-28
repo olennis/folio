@@ -531,6 +531,11 @@ final class PhotoAlbumUITests: XCTestCase {
         XCTAssertTrue(targets.firstMatch.label.contains("서윤"), "이름 있는 사람이 맨 위(추천)")
         targets.firstMatch.tap()
         app.buttons["합치기"].tap()
+        // 합친 뒤 같은 시트에서 기존 앨범에도 넣을지 묻는다.
+        XCTAssertTrue(app.navigationBars["앨범에도 넣을까요?"].waitForExistence(timeout: 5), "합친 뒤 앨범 고르기로 넘어간다")
+        XCTAssertTrue(app.buttons["새로운 앨범…"].exists)
+        shot("29-people-merge-albums")
+        app.buttons["albums-skip"].tap()
         let one = NSPredicate(format: "count == 1")
         expectation(for: one, evaluatedWith: cells)
         waitForExpectations(timeout: 5)
